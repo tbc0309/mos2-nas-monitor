@@ -1,0 +1,10 @@
+{
+  "zh": {
+    "WI-FI SETUP": "无线配网",
+    "MANAGEMENT": "设备管理",
+    "Key: {key}": "密码 {key}",
+    "Open 192.168.4.1": "打开 192.168.4.1",
+    "Scan to open settings": "扫码打开设置",
+    "Touch to return": "单击返回"
+  }
+}

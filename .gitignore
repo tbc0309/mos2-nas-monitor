@@ -1,0 +1,13 @@
+.pio/
+__pycache__/
+*.pyc
+simulator/renderer.exe
+simulator/renderer
+simulator/photos/
+*.ttf
+*.otf
+*.backup.bin
+.env
+simulator/data/
+
+dist/

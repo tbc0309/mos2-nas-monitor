@@ -1,0 +1,25 @@
+name: Firmware checks
+on:
+  push:
+    # 只检查分支推送；版本标签不再重复触发。
+    branches: ['**']
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install platformio==6.2.0 -r simulator/requirements.txt
+      - run: pio run
+      - run: python tools/check.py
+
