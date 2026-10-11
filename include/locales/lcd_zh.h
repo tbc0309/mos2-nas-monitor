@@ -1,6 +1,13 @@
 #pragma once
 namespace Ui {
 inline String tr(const String& label){if(!chinese)return label;
+ if(label=="OK")return "正常";
+ if(label=="No response")return "无回复";
+ if(label=="s")return "秒";
+ if(label=="WAIT")return "等待";
+ if(label=="Up")return "运行";
+ if(label=="RINGING")return "响铃中";
+ if(label=="Default password changed")return "默认密码已修改";
  if(label=="Sun")return "周日";
  if(label=="Mon")return "周一";
  if(label=="Tue")return "周二";
@@ -71,7 +78,6 @@ inline String tr(const String& label){if(!chinese)return label;
  if(label=="Synology NAS")return "群晖 NAS";
  if(label=="China Weather / UTC+8")return "中国天气网";
  if(label.startsWith("Disk"))return String("硬盘")+label.substring(4,label.length());
- if(label.startsWith("TV   "))return String("小电视 ")+label.substring(5,label.length());
  if(label.startsWith("IF: "))return String("网口 ")+label.substring(4,label.length());
  if(label.startsWith("Up   "))return String("运行 ")+label.substring(5,label.length());
  if(label.startsWith("RH "))return String("湿度 ")+label.substring(3,label.length());

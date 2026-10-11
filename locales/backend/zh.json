@@ -1,0 +1,23 @@
+{
+  "Invalid settings. Check addresses and values.": "设置无效，请检查地址和数值范围。",
+  "Saved. Restarting device.": "已保存，设备正在重启。",
+  "Use a 240x240 baseline JPEG, max 48KB. Original photo kept.": "需要 240×240 基线 JPEG，最大 48KB。原相片已保留。",
+  "Album is full (7 photos). Select a photo to replace.": "相册已满（7 张），请选择要替换的照片。",
+  "Choose a new password of at least 8 bytes.": "请设置至少 8 字节的新密码。",
+  "Encryption requires a privacy password (8–64 bytes).": "隐私密码须为 8–64 字节。",
+  "SNMP v3 requires a username and an authentication password (8–64 bytes).": "SNMP v3 需要用户名和认证密码（8–64 字节）。",
+  "Reload the settings page.": "请刷新设置页面。",
+  "Invalid background color": "底色无效。",
+  "Invalid display/alarm settings": "显示或闹钟设置无效。",
+  "Invalid display settings": "显示设置无效。",
+  "Invalid seconds setting": "秒数设置无效。",
+  "Configuration write failed": "配置保存失败。",
+  "Reload page": "请刷新页面。",
+  "Storage error": "存储失败。",
+  "Invalid language": "语言设置无效。",
+  "Invalid slot": "照片位置无效。",
+  "No photo": "没有照片。",
+  "No active alarm": "没有活动闹钟。",
+  "Invalid click count": "点击次数无效。",
+  "Reset confirmation expired": "重置确认已过期。"
+}

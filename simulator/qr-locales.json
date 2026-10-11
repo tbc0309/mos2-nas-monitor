@@ -5,6 +5,10 @@
     "Key: {key}": "密码 {key}",
     "Open 192.168.4.1": "打开 192.168.4.1",
     "Scan to open settings": "扫码打开设置",
-    "Touch to return": "单击返回"
+    "Touch to return": "单击返回",
+    "Default password changed": "默认密码已修改"
+  },
+  "en": {
+    "Default password changed": "Default password changed"
   }
 }

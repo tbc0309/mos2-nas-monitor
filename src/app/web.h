@@ -13,10 +13,12 @@ void startAP() {
 }
 String publicConfig() {
   return "{\"ssid\":" + jsonString(cfg.ssid) + ",\"nas\":" + jsonString(cfg.nas) +
-         ",\"mode\":" + jsonString("snmp") + ",\"port\":" + String(cfg.port) +
-         ",\"storage\":" + jsonString(cfg.storage) + ",\"iface\":" + jsonString(cfg.iface) +
-         ",\"home\":" + String(cfg.home) + ",\"interval\":" + String(cfg.interval) +
-         ",\"brightness\":" + String(cfg.brightness) +
+         ",\"snmpVersion\":" + jsonString(cfg.snmpVersion) +
+         ",\"snmpUser\":" + jsonString(cfg.snmpUser) + ",\"snmpAuth\":" + jsonString(cfg.snmpAuth) +
+         ",\"snmpPrivacy\":" + jsonString(cfg.snmpPrivacy) + ",\"mode\":" + jsonString("snmp") +
+         ",\"port\":" + String(cfg.port) + ",\"storage\":" + jsonString(cfg.storage) +
+         ",\"iface\":" + jsonString(cfg.iface) + ",\"home\":" + String(cfg.home) +
+         ",\"interval\":" + String(cfg.interval) + ",\"brightness\":" + String(cfg.brightness) +
          ",\"weatherEnabled\":" + String(cfg.weatherEnabled) +
          ",\"cityCode\":" + jsonString(cfg.cityCode) +
          ",\"weatherInterval\":" + String(cfg.weatherInterval) +
@@ -36,6 +38,10 @@ String publicConfig() {
 void home() {
   if (!sessionValid()) {
     entryPage(ap && web.uri() != "/manage");
+    return;
+  }
+  if (cfg.admin == "12345678") {
+    entryPage(false);
     return;
   }
   web.sendHeader("Cache-Control", "no-store");
@@ -103,6 +109,8 @@ void status() {
       ",\"storageIndex\":" + jsonString(storageIndex) +
       ",\"interfaceIndex\":" + jsonString(interfaceIndex) +
       ",\"interfaces\":" + interfacesStatus() + ",\"model\":" + jsonString(metric.model) +
+      ",\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") +
+      ",\"wifiSsid\":" + jsonString(WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String()) +
       ",\"ip\":" + jsonString(WiFi.localIP().toString()) +
       ",\"freeHeap\":" + String(ESP.getFreeHeap()) + ",\"clock\":" + jsonString(screen.clock) +
       ",\"date\":" + jsonString(screen.date) + ",\"weather\":" + weatherStatus() +
@@ -149,7 +157,7 @@ void settings() {
   if (!authorized())
     return;
   if (web.arg("token") != csrf) {
-    web.send(403, "text/plain", "Reload the settings page.");
+    web.send(403, "text/plain; charset=utf-8", WebMessages::text("Reload the settings page.", cfg.adminLanguage == "en"));
     return;
   }
   if (web.hasArg("nasBackground")) {
@@ -159,7 +167,7 @@ void settings() {
       if (!isxdigit(bg[i]))
         ok = false;
     if (!ok) {
-      web.send(400, "text/plain", "Invalid background color");
+      web.send(400, "text/plain; charset=utf-8", WebMessages::text("Invalid background color", cfg.adminLanguage == "en"));
       return;
     }
   }
@@ -188,6 +196,35 @@ void settings() {
                                cfg.adminLanguage == "en"));
     return;
   }
+  if (web.arg("admin").length() &&
+      (web.arg("admin").length() < 8 || web.arg("admin") == "12345678")) {
+    web.send(400, "text/plain; charset=utf-8",
+             WebMessages::text("Choose a new password of at least 8 bytes.", cfg.adminLanguage == "en"));
+    return;
+  }
+  String version = web.hasArg("snmpVersion") ? web.arg("snmpVersion") : cfg.snmpVersion;
+  String user = web.hasArg("snmpUser") ? web.arg("snmpUser") : cfg.snmpUser;
+  String authPassword =
+      web.arg("snmpPassword").length() ? web.arg("snmpPassword") : cfg.snmpPassword;
+  String authProtocol = web.hasArg("snmpAuth") ? web.arg("snmpAuth") : cfg.snmpAuth;
+  if ((version != "2c" && version != "3") || (authProtocol != "MD5" && authProtocol != "SHA") || user.length() > 32 ||
+      authPassword.length() > 64 ||
+      (version == "3" && (!user.length() || authPassword.length() < 8))) {
+    web.send(400, "text/plain; charset=utf-8",
+             WebMessages::text(
+                 "SNMP v3 requires a username and an authentication password (8–64 bytes).",
+                 cfg.adminLanguage == "en"));
+    return;
+  }
+  String privacy = web.hasArg("snmpPrivacy") ? web.arg("snmpPrivacy") : cfg.snmpPrivacy;
+  String privatePassword = web.arg("snmpPrivacyPassword").length() ? web.arg("snmpPrivacyPassword")
+                                                                   : cfg.snmpPrivacyPassword;
+  if ((privacy != "none" && privacy != "DES" && privacy != "AES") || privatePassword.length() > 64 ||
+      (version == "3" && privacy != "none" && privatePassword.length() < 8)) {
+    web.send(400, "text/plain; charset=utf-8",
+             WebMessages::text("Encryption requires a privacy password (8–64 bytes).", cfg.adminLanguage == "en"));
+    return;
+  }
   const Config previousConfig = cfg;
   if (web.hasArg("language")) {
     String lang = web.arg("language"), color = web.arg("clockColor");
@@ -198,7 +235,7 @@ void settings() {
       if (!isxdigit(color[i]))
         valid = false;
     if (!valid) {
-      web.send(400, "text/plain", "Invalid display/alarm settings");
+      web.send(400, "text/plain; charset=utf-8", WebMessages::text("Invalid display/alarm settings", cfg.adminLanguage == "en"));
       return;
     }
     String minute = web.hasArg("minuteColor") ? web.arg("minuteColor") : color;
@@ -208,12 +245,12 @@ void settings() {
         colorValid = false;
     if (!colorValid || (web.hasArg("albumFixed") && web.arg("albumFixed") != "0" &&
                         web.arg("albumFixed") != "1")) {
-      web.send(400, "text/plain", "Invalid display settings");
+      web.send(400, "text/plain; charset=utf-8", WebMessages::text("Invalid display settings", cfg.adminLanguage == "en"));
       return;
     }
     if (web.hasArg("showSeconds")) {
       if (web.arg("showSeconds") != "0" && web.arg("showSeconds") != "1") {
-        web.send(400, "text/plain", "Invalid seconds setting");
+        web.send(400, "text/plain; charset=utf-8", WebMessages::text("Invalid seconds setting", cfg.adminLanguage == "en"));
         return;
       }
       cfg.showSeconds = web.arg("showSeconds").toInt();
@@ -228,6 +265,12 @@ void settings() {
   }
   if (web.hasArg("nasBackground"))
     cfg.nasBackground = web.arg("nasBackground");
+  cfg.snmpVersion = version;
+  cfg.snmpUser = user;
+  cfg.snmpPassword = authPassword;
+  cfg.snmpAuth = authProtocol;
+  cfg.snmpPrivacy = privacy;
+  cfg.snmpPrivacyPassword = privatePassword;
   cfg.ssid = ss;
   if (web.arg("pass").length())
     cfg.pass = web.arg("pass");
@@ -258,7 +301,7 @@ void settings() {
   cfg.brightness = bl;
   if (!save()) {
     cfg = previousConfig;
-    web.send(500, "text/plain", "Configuration write failed");
+    web.send(500, "text/plain; charset=utf-8", WebMessages::text("Configuration write failed", cfg.adminLanguage == "en"));
     return;
   }
   web.send(200, "text/plain; charset=utf-8",

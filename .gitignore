@@ -11,3 +11,6 @@ simulator/photos/
 simulator/data/
 
 dist/
+
+# Local build tools and temporary validation output
+work/

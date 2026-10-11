@@ -33,21 +33,27 @@ void handleTouch(Touch::Action action);
 void eraseUserData() {
   Dir dir = LittleFS.openDir("/");
   while (dir.next()) {
-    if (dir.isFile())
+    if (dir.isFile() && !Storage::isSystemResource(dir.fileName().c_str()))
       LittleFS.remove(dir.fileName());
   }
 }
 #include "app/extras_web.h"
+#include "app/firmware_update.h"
 #include "app/routes.h"
 void setup() {
   Serial.begin(115200);
-  Serial.println("\nMOS2 NAS 1.0.0 boot");
+  Serial.printf("OTA layout=%02x\n", pgm_read_byte(otaContract + 10));
+  Serial.println("\nMOS2 NAS 1.1.0 boot");
   pinMode(12, OUTPUT);
   digitalWrite(12, LOW);
   pinMode(4, INPUT_PULLUP);
   pinMode(5, OUTPUT);
   analogWriteRange(1023);
   load();
+  Serial.printf("FONT filesystem resource %s bytes=%u\n", FontResource::begin() ? "OK" : "MISSING/INVALID", Cjk::resourceBytes);
+  FSInfo fsInfo;
+  if (LittleFS.info(fsInfo))
+    Serial.printf("FILESYSTEM total=%u used=%u\n", fsInfo.totalBytes, fsInfo.usedBytes);
   Serial.printf("CONFIG loaded ssidLength=%u home=%u heap=%u\n", cfg.ssid.length(), cfg.home,
                 ESP.getFreeHeap());
   brightness();
@@ -71,7 +77,6 @@ void setup() {
   storageIndex = cfg.storage;
   interfaceIndex = cfg.iface;
   discover = true;
-  walkOid = storageBase;
   page = cfg.home;
   scanAlbum();
   {
@@ -80,6 +85,7 @@ void setup() {
       alarmClock.lastDay = line(f).toInt();
   }
   registerWeb();
+  Serial.printf("SNMP version=%s privacy=%s\n", cfg.snmpVersion.c_str(), cfg.snmpPrivacy.c_str());
   Serial.println("SETUP complete");
   draw();
 }
@@ -89,7 +95,7 @@ void loop() {
   web.handleClient();
   if (ap)
     dns.processNextRequest();
-  if (reboot && millis() - rebootAt > 1200)
+  if (reboot && millis() - rebootAt > rebootDelay)
     ESP.restart();
   static uint32_t disconnectedAt = 0;
   if (!ap && WiFi.status() != WL_CONNECTED) {
@@ -115,8 +121,10 @@ void loop() {
   if (!ap && WiFi.status() == WL_CONNECTED) {
     IPAddress ip;
     ip.fromString(cfg.nas);
-    nasExtra.update(ip, cfg.port, cfg.community);
-    networkInterfaces.update(ip, cfg.port, cfg.community);
+    if (Telemetry::startup.ready(millis(), 8))
+      networkInterfaces.update(ip, cfg.port, cfg.community);
+    if (Telemetry::storageReady(millis()))
+      nasExtra.update(ip, cfg.port, cfg.community, page == 8);
   }
   alarmService();
   if (millis() - paintAt > 1000) {

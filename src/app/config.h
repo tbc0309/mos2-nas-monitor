@@ -29,12 +29,20 @@ String line(File &f) {
   return s;
 }
 bool save() {
-  StaticJsonDocument<2048> doc;
+  // Configuration grew with USM credentials; keep this bounded buffer off the 4 KiB stack.
+  DynamicJsonDocument doc(3072);
   doc["schema"] = 1;
   doc["ssid"] = cfg.ssid;
   doc["pass"] = cfg.pass;
   doc["nas"] = cfg.nas;
   doc["community"] = cfg.community;
+  doc["snmpVersion"] = cfg.snmpVersion;
+  doc["snmpUser"] = cfg.snmpUser;
+  doc["snmpPassword"] = cfg.snmpPassword;
+  doc["snmpPrivacy"] = cfg.snmpPrivacy;
+  doc["snmpPrivacyPassword"] = cfg.snmpPrivacyPassword;
+  doc["snmpAuth"] = cfg.snmpAuth;
+
   doc["admin"] = cfg.admin;
   doc["storage"] = cfg.storage;
   doc["iface"] = cfg.iface;
@@ -110,7 +118,7 @@ void load() {
     Serial.println("Blank filesystem initialized");
   }
   File f = LittleFS.open("/config.json", "r");
-  StaticJsonDocument<2048> doc;
+  DynamicJsonDocument doc(3072);
   if (f && !deserializeJson(doc, f) && doc["schema"] == 1) {
     if (doc["ssid"].is<const char *>())
       cfg.ssid = doc["ssid"].as<String>();
@@ -120,6 +128,18 @@ void load() {
       cfg.nas = doc["nas"].as<String>();
     if (doc["community"].is<const char *>())
       cfg.community = doc["community"].as<String>();
+    if (doc["snmpVersion"].is<const char *>())
+      cfg.snmpVersion = doc["snmpVersion"].as<String>();
+    if (doc["snmpUser"].is<const char *>())
+      cfg.snmpUser = doc["snmpUser"].as<String>();
+    if (doc["snmpPassword"].is<const char *>())
+      cfg.snmpPassword = doc["snmpPassword"].as<String>();
+    if (doc["snmpPrivacy"].is<const char *>())
+      cfg.snmpPrivacy = doc["snmpPrivacy"].as<String>();
+    if (doc["snmpPrivacyPassword"].is<const char *>())
+      cfg.snmpPrivacyPassword = doc["snmpPrivacyPassword"].as<String>();
+    if (doc["snmpAuth"].is<const char *>())
+      cfg.snmpAuth = doc["snmpAuth"].as<String>();
     if (doc["admin"].is<const char *>())
       cfg.admin = doc["admin"].as<String>();
     if (doc["storage"].is<const char *>())
@@ -176,6 +196,11 @@ void load() {
   f.close();
   if (!cfg.admin.length())
     cfg.admin = "12345678";
+  if (cfg.snmpVersion != "3")
+    cfg.snmpVersion = "2c";
+  if (cfg.snmpAuth != "SHA") cfg.snmpAuth = "MD5";
+  if (cfg.snmpPrivacy != "DES" && cfg.snmpPrivacy != "AES")
+    cfg.snmpPrivacy = "none";
   cfg.port = constrain(cfg.port, 1u, 65535u);
   cfg.weatherEnabled = !!cfg.weatherEnabled;
   cfg.weatherInterval = constrain(cfg.weatherInterval, 5u, 60u);

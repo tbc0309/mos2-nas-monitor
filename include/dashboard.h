@@ -26,12 +26,16 @@ enum Color {
   SOFTRED,
   EDGEORANGE,
   EDGEGREEN,
-  EDGETRACK
+  EDGETRACK,
+  DOTGREEN,
+  DOTRED
 };
 
-uint16_t palette[16] = {0x222b, 0x1188, 0xffff, 0xae3a, 0x365e, 0x87e8, 0xfacb, 0x1147,
-                        0xc679, 0xfd88, 0xef9d, 0xcf15, 0xfdf7, 0x8bc7, 0x4b67, 0x21a9};
+uint16_t palette[18] = {0x222b, 0x1188, 0xffff, 0xae3a, 0x365e, 0x87e8, 0xfacb, 0x1147,
+                        0xc679, 0xfd88, 0xef9d, 0xcf15, 0xfdf7, 0x8bc7, 0x4b67, 0x21a9, 0x5d85, 0xa9e7};
 
+// Dots/strokes use roughly 70%-brightness arrow colors; fill peaks match the arrows.
+constexpr uint16_t GraphFillGreen = 0x87e8, GraphFillRed = 0xfacb;
 bool indexed = false;
 
 inline uint16_t c(Color color) {
@@ -47,9 +51,11 @@ struct Disk {
 struct Volume {
   String index, name;
   uint64_t units = 0, size = 0, used = 0;
+  bool valid = true;
 };
 
 struct State {
+  bool privacy = false;
 
   Disk disks[12];
   Volume volumes[8];
@@ -74,6 +80,7 @@ struct State {
 
   bool online = false;
 
+  String security;
   String nas, device, model, volume, iface, source = "SNMP";
 
   bool weatherEnabled = true, weatherOnline = false;
@@ -202,63 +209,76 @@ template <class T> void graph(T &s, const State &d, int x, int y, int w, int h) 
   if (y >= Cjk::clipBottom || y + h <= Cjk::clipTop)
     return;
   s.fillRoundRect(x, y, w, h, 5, c(GRAPH));
-  if (d.historyCount < 2) {
+  if (d.historyCount == 0) {
     Cjk::background = c(GRAPH);
     text(s, "Waiting for samples", x + 16, y + h / 2 - 8, 2, MUTED);
     Cjk::background = c(BG);
     return;
   }
-  unsigned count = d.historyCount < 10 ? d.historyCount : 10, start = d.historyCount - count;
-  float peak = 1024;
-  for (unsigned k = start; k < d.historyCount; k++) {
-    if (d.rxHistory[k] > peak)
-      peak = d.rxHistory[k];
-    if (d.txHistory[k] > peak)
-      peak = d.txHistory[k];
-  }
-  int base = y + h - 6, span = w - 12;
-  for (int xx = 0; xx <= span; xx++) {
-    float slot = float(xx) * (count - 1) / span;
-    unsigned k = unsigned(slot);
-    if (k >= count - 1)
-      k = count - 2;
-    float t = slot - k;
-    int curve[2];
-    bool valid[2];
-    for (int v = 0; v < 2; v++) {
-      const float *a = v ? d.txHistory : d.rxHistory;
-      valid[v] = a[start + k] >= 0 && a[start + k + 1] >= 0;
-      curve[v] = base - int((a[start + k] * (1 - t) + a[start + k + 1] * t) / peak * (h - 12));
+  if (d.historyCount == 1) {
+    // One measured rate is enough to show a dot, but not an invented segment.
+    for (unsigned v = 0; v < 2; ++v) {
+      float value = v ? d.txHistory[0] : d.rxHistory[0];
+      if (value < 0) continue;
+      int base = v ? y + h - 6 : y + h / 2 - 4;
+      float peak = value > 1024 ? value : 1024;
+      int amplitude = v ? h - h / 2 - 10 : h / 2 - 10;
+      s.fillCircle(x + w - 6, base - int(value / peak * amplitude), 3, c(v ? DOTRED : DOTGREEN));
     }
-    for (int yy = y + 6; yy <= base; yy += 3)
-      if (yy >= Cjk::clipTop - 2 && yy < Cjk::clipBottom) {
-        uint16_t color = c(GRAPH);
-        bool filled = false;
-        for (int v = 0; v < 2; v++)
-          if (valid[v] && yy >= curve[v]) {
-            int alpha = 90 * (base - yy) / (base - curve[v] + 1);
-            color = mixColor(c(v ? RED : GREEN), color, alpha);
-            filled = true;
-          }
-        if (filled)
-          s.fillRect(x + 6 + xx, yy, 1, base - yy < 2 ? base - yy + 1 : 3, color);
-      }
+    return;
   }
+  unsigned count = d.historyCount < 10 ? d.historyCount : 10, start = d.historyCount - count;
+  // Separate scales keep asymmetric upload/download trends visible.
+  float peak[2] = {1024, 1024};
+  for (unsigned k = start; k < d.historyCount; k++) {
+    if (d.rxHistory[k] > peak[0])
+      peak[0] = d.rxHistory[k];
+    if (d.txHistory[k] > peak[1])
+      peak[1] = d.txHistory[k];
+  }
+  const int middle = y + h / 2, span = w - 12;
+  // Equal-height bands: receive above, send below, with a gap at the divider.
+  const int base[2] = {middle - 4, y + h - 6};
+  const int amplitude[2] = {h / 2 - 10, h - h / 2 - 10};
   for (int k = 1; k < 4; k++)
     s.drawFastHLine(x + 5, y + k * h / 4, w - 10, c(GRID));
+  // Interpolate the exact integer endpoints, with no row-grid gaps.
+  for (int xx = 0; xx <= span; xx++) {
+    unsigned k = 0;
+    while (k + 1 < count - 1 && xx > int((k + 1) * span / (count - 1))) ++k;
+    int xa = k * span / (count - 1), xb = (k + 1) * span / (count - 1);
+    for (int v = 0; v < 2; v++) {
+      const float *a = v ? d.txHistory : d.rxHistory;
+      if (a[start + k] < 0 || a[start + k + 1] < 0) continue;
+      int ya = base[v] - int(a[start + k] / peak[v] * amplitude[v]);
+      int yb = base[v] - int(a[start + k + 1] / peak[v] * amplitude[v]);
+      int curve = ya + (yb - ya) * (xx - xa) / (xb - xa);
+      int top = curve < Cjk::clipTop ? curve + (Cjk::clipTop - curve) / 2 * 2 : curve;
+      int bottom = base[v] < Cjk::clipBottom - 1 ? base[v] : Cjk::clipBottom - 1;
+      for (int yy = top; yy <= bottom; yy += 2) {
+        int depth = base[v] - curve;
+        // Fill peaks at 50% dot-color opacity; the polyline remains fully opaque.
+        int fade = depth ? 255 * (base[v] - yy) / depth : 255;
+        int alpha = 18 + 237 * fade * (128 + fade / 2) / 65025;
+        uint16_t shade = mixColor(v ? GraphFillRed : GraphFillGreen, c(GRAPH), alpha);
+        s.fillRect(x + 6 + xx, yy, 1, yy < base[v] ? 2 : 1, shade);
+      }
+    }
+  }
   for (int v = 0; v < 2; v++) {
     const float *values = v ? d.txHistory : d.rxHistory;
-    Color color = v ? RED : GREEN;
+    Color color = v ? DOTRED : DOTGREEN;
+    // Draw every line first; later segments must not overwrite existing dots.
+    for (unsigned k = 1; k < count; k++) {
+      if (values[start + k] < 0 || values[start + k - 1] < 0) continue;
+      int xp = x + 6 + k * span / (count - 1), yp = base[v] - int(values[start + k] / peak[v] * amplitude[v]);
+      int x0 = x + 6 + (k - 1) * span / (count - 1), y0 = base[v] - int(values[start + k - 1] / peak[v] * amplitude[v]);
+      s.drawLine(x0, y0, xp, yp, c(color));
+    }
     for (unsigned k = 0; k < count; k++) {
-      if (values[start + k] < 0)
-        continue;
-      int xp = x + 6 + k * span / (count - 1), yp = base - int(values[start + k] / peak * (h - 12));
-      if (k && values[start + k - 1] >= 0) {
-        int x0 = x + 6 + (k - 1) * span / (count - 1),
-            y0 = base - int(values[start + k - 1] / peak * (h - 12));
-        s.drawLine(x0, y0, xp, yp, c(color));
-      }
-      s.fillCircle(xp, yp, 2, c(color));
+      if (values[start + k] < 0) continue;
+      int xp = x + 6 + k * span / (count - 1), yp = base[v] - int(values[start + k] / peak[v] * amplitude[v]);
+      s.fillCircle(xp, yp, 3, c(color));
     }
   }
 }
@@ -525,12 +545,13 @@ template <class T> void render(T &s, const State &d, unsigned page) {
         continue;
       card(s, 6, y - 3, 228, 52);
       Cjk::background = c(PANEL);
-      float used = v.size ? 100.0 * v.used / v.size : -1;
+      float used = v.valid && v.size ? 100.0 * v.used / v.size : -1;
 
       text(s, v.name, 10, y, 2, CYAN);
       metricRight(s, pct(used), 230, y, 2);
       bar(s, 10, y + 23, 220, used, used >= 90 ? RED : GREEN);
-      metricText(s, capacity(v.used * v.units) + " / " + capacity(v.size * v.units), 10, y + 34, 1);
+      metricText(s, (v.valid ? capacity(v.used * v.units) : String("--")) + " / " +
+                       (v.size ? capacity(v.size * v.units) : String("--")), 10, y + 34, 1);
     }
     Cjk::background = c(BG);
     if (!d.volumeCount)
@@ -544,10 +565,10 @@ template <class T> void render(T &s, const State &d, unsigned page) {
 
   if (page == 0) {
 
-    largeArrow(s, 8, 6, true, RED);
-    throughput(s, d.tx, 33, 6);
-    largeArrow(s, 128, 6, false, GREEN);
-    throughput(s, d.rx, 153, 6);
+    largeArrow(s, 8, 6, false, GREEN);
+    throughput(s, d.rx, 33, 6);
+    largeArrow(s, 128, 6, true, RED);
+    throughput(s, d.tx, 153, 6);
 
     graph(s, d, 8, 38, 224, 74);
 
@@ -567,6 +588,13 @@ template <class T> void render(T &s, const State &d, unsigned page) {
 
     Cjk::background = c(BG);
     text(s, d.nas, 10, 198, 2, MUTED);
+    if(d.privacy){
+      int x=128; // Align the lock right edge with the memory card.
+      s.fillRoundRect(x,204,9,7,2,c(GREEN));
+      s.fillRoundRect(x+2,198,5,9,2,c(GREEN));
+      s.fillRoundRect(x+3,200,3,5,1,c(BG));
+      s.fillRect(x+4,206,1,3,c(BG));
+    }
     s.fillCircle(143, 205, 2, c(d.online ? GREEN : ORANGE));
 
   } else if (page == 1) {
@@ -596,7 +624,7 @@ template <class T> void render(T &s, const State &d, unsigned page) {
     metricRight(s, pct(d.memory), 230, 90, 4);
     bar(s, 10, 122, 220, d.memory, CYAN);
     text(s, "Used", 10, 143, 2, MUTED);
-    metricRight(s, d.memoryTotal ? capacity(d.memoryTotal - d.memoryAvail) : "--", 230, 141, 3);
+    metricRight(s, d.memoryTotal && d.memory >= 0 ? capacity(d.memoryTotal - d.memoryAvail) : "--", 230, 141, 3);
     text(s, "Total", 10, 167, 2, MUTED);
     metricRight(s, d.memoryTotal ? capacity(d.memoryTotal) : "--", 230, 165, 3);
     Cjk::background = c(BG);
@@ -604,21 +632,31 @@ template <class T> void render(T &s, const State &d, unsigned page) {
 
   } else if (page == 4) {
     header(s, d, "DEVICE / STATUS");
-    card(s, 6, 36, 228, 157);
+    card(s, 6, 36, 228, 130);
     Cjk::background = c(PANEL);
-    text(s, d.model.length() ? d.model : "Synology NAS", 10, 42, 3, CYAN);
-    text(s, "NAS  " + d.nas, 10, 77, 2);
-    text(s, "TV   " + d.device, 10, 102, 2);
-    text(s, "WiFi", 10, 127, 2);
-    metricText(s, String(d.rssi) + " dBm", 10 + Cjk::width("WiFi ", 2), 127, 2);
-    text(s, "Up", 10, 152, 2);
-    metricText(
-        s, String(d.uptime / 86400) + Ui::tr("d ") + String((d.uptime / 3600) % 24) + Ui::tr("h"),
-        10 + Cjk::width(Ui::tr("Up   "), 2), 152, 2);
-    text(s,
-         d.online ? d.source + Ui::tr(" OK ") + String(d.age) + Ui::tr("s ago")
-                  : d.source + Ui::tr(" WAIT"),
-         10, 177, 2, d.online ? GREEN : ORANGE);
+    text(s, d.model.length() ? d.model : "Synology NAS", 10, 42, 3, WHITE);
+    // Group colors by function: addresses, wireless link, system uptime.
+    const String labels[] = {"NAS", Ui::tr("Up"), "MOS2", Ui::tr("WiFi")};
+    const Color rowColors[] = {CYAN, WHITE, CYAN, MUTED};
+    int valueX = 10;
+    for (const auto &label : labels) {
+      int edge = 18 + Cjk::width(label, 2); if (edge > valueX) valueX = edge;
+    }
+    const String values[] = {d.nas,
+      String(d.uptime / 86400) + Ui::tr("d ") + String((d.uptime / 3600) % 24) + Ui::tr("h"),
+      d.device, String(d.rssi) + " dBm"};
+    for (unsigned row = 0; row < 4; ++row) {
+      int y = 73 + 23 * row;
+      text(s, labels[row], 10, y, 2, rowColors[row]);
+      text(s, values[row], valueX, y, 2, rowColors[row]);
+    }
+    // SNMP is a separate status block; its entire line follows connection state.
+    card(s, 6, 171, 228, 26);
+    Cjk::background = c(PANEL);
+    String snmpStatus = d.source + " " + (d.online ? Ui::tr("OK") +
+      (d.security.length() ? " " + d.security : String("")) :
+      Ui::tr("No response") + (d.age ? " " + String(d.age) + Ui::tr("s") : String("")));
+    text(s, snmpStatus, 10, 176, 2, d.online ? GREEN : ORANGE);
     Cjk::background = c(BG);
     text(s, "5 taps: management QR", 10, 200, 1, MUTED);
   }

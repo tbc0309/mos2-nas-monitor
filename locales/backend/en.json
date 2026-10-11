@@ -1,0 +1,23 @@
+{
+  "Invalid settings. Check addresses and values.": "Invalid settings. Check addresses and values.",
+  "Saved. Restarting device.": "Saved. Restarting device.",
+  "Use a 240x240 baseline JPEG, max 48KB. Original photo kept.": "Use a 240x240 baseline JPEG, max 48KB. Original photo kept.",
+  "Album is full (7 photos). Select a photo to replace.": "Album is full (7 photos). Select a photo to replace.",
+  "Choose a new password of at least 8 bytes.": "Choose a new password of at least 8 bytes.",
+  "Encryption requires a privacy password (8–64 bytes).": "Encryption requires a privacy password (8–64 bytes).",
+  "SNMP v3 requires a username and an authentication password (8–64 bytes).": "SNMP v3 requires a username and an authentication password (8–64 bytes).",
+  "Reload the settings page.": "Reload the settings page.",
+  "Invalid background color": "Invalid background color",
+  "Invalid display/alarm settings": "Invalid display/alarm settings",
+  "Invalid display settings": "Invalid display settings",
+  "Invalid seconds setting": "Invalid seconds setting",
+  "Configuration write failed": "Configuration write failed",
+  "Reload page": "Reload page",
+  "Storage error": "Storage error",
+  "Invalid language": "Invalid language",
+  "Invalid slot": "Invalid slot",
+  "No photo": "No photo",
+  "No active alarm": "No active alarm",
+  "Invalid click count": "Invalid click count",
+  "Reset confirmation expired": "Reset confirmation expired"
+}

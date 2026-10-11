@@ -3,6 +3,11 @@
 #include <vector>
 #include "flash_storage.h"
 int main() {
+  assert(Storage::isSystemResource("/fonts/ui04.bin"));
+  assert(Storage::isSystemResource("assets/weather.bin"));
+  assert(!Storage::isSystemResource("/config.json"));
+  assert(!Storage::isSystemResource("/photo-0.jpg"));
+  assert(!Storage::isSystemResource("/fonts-user.jpg"));
   std::vector<uint32_t> memory(777, 0xffffffffu);
   unsigned services = 0;
   auto read = [&](uint32_t address, uint32_t *out, size_t bytes) {

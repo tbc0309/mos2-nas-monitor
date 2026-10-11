@@ -1,7 +1,12 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 namespace Storage {
+inline bool isSystemResource(const char* path) {
+  if (*path == '/') path++;
+  return strncmp(path, "fonts/", 6) == 0 || strncmp(path, "assets/", 7) == 0;
+}
 // Never format a mount failure unless every word in the partition is erased.
 template <class Read, class Service>
 bool isErased(uint32_t begin, uint32_t end, Read read, Service service) {
