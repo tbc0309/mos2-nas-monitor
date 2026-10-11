@@ -2,7 +2,7 @@
 
 ## Windows 免安装版
 
-下载 Release 中 `MOS2-NAS-Simulator-1.1.0-Windows.zip`，完整解压后双击 `MOS2-NAS-Simulator.exe`。程序自动打开本机浏览器；关闭控制台窗口停止模拟器。不要单独移动 exe，`_internal` 目录也需要保留。
+下载 Release 中 `MOS2-NAS-Simulator-1.1.1-Windows.zip`，完整解压后双击 `MOS2-NAS-Simulator.exe`。程序自动打开本机浏览器；关闭控制台窗口停止模拟器。不要单独移动 exe，`_internal` 目录也需要保留。
 
 - 屏幕按240×240实际像素显示，可测试页面、触摸多击、闹钟、相册及管理配置。
 - 管理页密码默认 `12345678`，NAS 地址和 community 在管理页填写，可访问电脑所在网络中的真实 SNMP NAS。

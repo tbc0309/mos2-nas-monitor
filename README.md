@@ -2,7 +2,7 @@
 
 **简体中文** · [English](README.en.md)
 
-**版本 1.1.0** · MOS2的桌面与群晖 NAS 监控固件 · **MIT License**
+**版本 1.1.1** · MOS2的桌面与群晖 NAS 监控固件 · **MIT License**
 
 通过 SNMP v2c / v3 获取 CPU、内存、网络速率、系统温度、硬盘健康和存储卷信息，无需安装 Netdata。同时提供天气时钟、相册、蜂鸣器闹钟、扫码配网和中英文网页管理。
 
@@ -39,14 +39,14 @@
 
 ### 安装固件
 
-从 [Releases](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) 下载 `MOS2-NAS-1.1.0.bin`。同一个文件用于 USB 全新安装和网页升级，已包含程序与字库。
+从 [Releases](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) 下载 `MOS2-NAS-1.1.1.bin`。同一个文件用于 USB 全新安装和网页升级，已包含程序与字库。
 
 全新安装时，替换 `COM7` 为实际串口：
 
 ```shell
 python -m pip install esptool
 python -m esptool --port COM7 erase-flash
-python -m esptool --port COM7 --baud 460800 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.1.0.bin
+python -m esptool --port COM7 --baud 460800 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.1.1.bin
 ```
 
 USB 全新安装会清除配置和照片。已有设备需要保留数据时，使用管理页的固件升级功能。
@@ -120,7 +120,7 @@ NAS 组：**总览 → 网络 → CPU / 内存 → 硬盘健康 → 存储卷 �
 
 ## 升级与重置
 
-管理页 **维护 → 固件升级** 选择同一个 `MOS2-NAS-1.1.0.bin`，默认勾选“保留配置和照片”。取消勾选后，验证并升级成功才清除用户数据；校验失败不清除数据。
+管理页 **维护 → 固件升级** 选择同一个 `MOS2-NAS-1.1.1.bin`，默认勾选“保留配置和照片”。取消勾选后，验证并升级成功才清除用户数据；校验失败不清除数据。
 
 ![固件升级页面](docs/images/web-maintenance.png)
 
@@ -160,7 +160,7 @@ python simulator/server.py
 python -m pip install platformio
 pio run
 pio run -t buildfs
-python tools/build_install_image.py --output MOS2-NAS-1.1.0.bin
+python tools/build_install_image.py --output MOS2-NAS-1.1.1.bin
 ```
 
 ### 代码与语言包

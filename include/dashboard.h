@@ -197,8 +197,31 @@ inline String rateLabel(float n) {
 inline int rateFont(float) {
   return 3;
 }
+// Each overview rate has 87 pixels. Keep the native 26px font stable;
+// reduce precision only when a label would overflow its half of the screen.
+inline String overviewRateLabel(float n) {
+  if (n < 0) return "--";
+  const double divisor = n >= 1073741824.0f ? 1073741824.0 :
+                         n >= 1048576 ? 1048576.0 : 1024.0;
+  const char* unit = n >= 1073741824.0f ? "G/s" : n >= 1048576 ? "M/s" : "K/s";
+  double value = n / divisor;
+  String label = String(value, value >= 99.95 ? 0 : 1) + unit;
+  if (Cjk::width(label, 4) > 87) label = String(value, 0) + unit;
+  return label;
+}
+template <class T> void rateText(T &s, const String &label, int x, int y, int font) {
+  // Keep numbers white; unit colors distinguish magnitude without changing size.
+  Color unit = label.indexOf('G') >= 0 ? ORANGE : label.indexOf('M') >= 0 ? CYAN : MUTED;
+  unsigned pos = 0;
+  while (pos < label.length()) {
+    unsigned start = pos, code = Cjk::next(label, pos);
+    bool number = (code >= '0' && code <= '9') || code == '.' || code == '-';
+    Cjk::draw(s, label.substring(start, pos), x, y, font, c(number ? WHITE : unit), TL_DATUM);
+    x += Cjk::advance(code, font);
+  }
+}
 template <class T> void throughput(T &s, float n, int x, int y, int font = 3) {
-  metricText(s, rateLabel(n), x, y, font, WHITE);
+  rateText(s, rateLabel(n), x, y, font);
 }
 inline uint16_t mixColor(uint16_t f, uint16_t b, int a) {
   return ((((f >> 11) * a + (b >> 11) * (255 - a)) / 255) << 11) |
@@ -566,9 +589,9 @@ template <class T> void render(T &s, const State &d, unsigned page) {
   if (page == 0) {
 
     largeArrow(s, 8, 6, false, GREEN);
-    throughput(s, d.rx, 33, 6);
+    rateText(s, overviewRateLabel(d.rx), 33, 6, 4);
     largeArrow(s, 128, 6, true, RED);
-    throughput(s, d.tx, 153, 6);
+    rateText(s, overviewRateLabel(d.tx), 153, 6, 4);
 
     graph(s, d, 8, 38, 224, 74);
 
@@ -603,10 +626,10 @@ template <class T> void render(T &s, const State &d, unsigned page) {
     Cjk::background = c(PANEL);
     largeArrow(s, 12, 41, false, GREEN);
     text(s, "RECEIVE", 40, 45, Ui::chinese ? 2 : 1, MUTED);
-    throughput(s, d.rx, 228 - Cjk::width(rateLabel(d.rx), 4), 38, 4);
+    throughput(s, d.rx, 228 - Cjk::width(rateLabel(d.rx), 4), 41, 4);
     largeArrow(s, 12, 76, true, RED);
     text(s, "SEND", 40, 80, Ui::chinese ? 2 : 1, MUTED);
-    throughput(s, d.tx, 228 - Cjk::width(rateLabel(d.tx), 4), 73, 4);
+    throughput(s, d.tx, 228 - Cjk::width(rateLabel(d.tx), 4), 76, 4);
     Cjk::background = c(BG);
     graph(s, d, 8, 112, 224, 70);
     text(s, "IF: " + d.iface, 10, 192, 2, MUTED);

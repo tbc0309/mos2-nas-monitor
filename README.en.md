@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · **English**
 
-**Version 1.1.0** · Desktop display and Synology NAS monitor for MOS2 · **MIT License**
+**Version 1.1.1** · Desktop display and Synology NAS monitor for MOS2 · **MIT License**
 
 Monitor CPU, memory, network traffic, system temperature, disk health and storage volumes through SNMP v2c / v3. No Netdata installation is required. Includes a weather clock, photo album, buzzer alarms, QR Wi-Fi setup and bilingual web management.
 
@@ -39,14 +39,14 @@ Configure the display, weather, alarms, NAS, Wi-Fi and album in a browser. Switc
 
 ### Install
 
-Download `MOS2-NAS-1.1.0.bin` from [Releases](https://github.com/tbc0309/mos2-nas-monitor/releases/latest). One file contains the application and font resources and supports both USB installation and web updates.
+Download `MOS2-NAS-1.1.1.bin` from [Releases](https://github.com/tbc0309/mos2-nas-monitor/releases/latest). One file contains the application and font resources and supports both USB installation and web updates.
 
 For a fresh installation, replace `COM7` with your serial port:
 
 ```shell
 python -m pip install esptool
 python -m esptool --port COM7 erase-flash
-python -m esptool --port COM7 --baud 460800 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.1.0.bin
+python -m esptool --port COM7 --baud 460800 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.1.1.bin
 ```
 
 A fresh USB installation clears settings and photos. Use the web updater to preserve existing user data.
@@ -122,7 +122,7 @@ The album holds **up to seven 240×240 JPEG photos, at most 48KB each**. Double 
 
 ## Update and reset
 
-Under **Maintenance → Firmware update**, select `MOS2-NAS-1.1.0.bin`. **Keep settings and photos** is enabled by default. Unchecking it clears user data only after a validated, successful update; validation failure does not clear data.
+Under **Maintenance → Firmware update**, select `MOS2-NAS-1.1.1.bin`. **Keep settings and photos** is enabled by default. Unchecking it clears user data only after a validated, successful update; validation failure does not clear data.
 
 ![Update and reset](docs/images/en/web-maintenance.png)
 
@@ -154,7 +154,7 @@ Generated fonts and web headers are included; a regular build does not require i
 python -m pip install platformio
 pio run
 pio run -t buildfs
-python tools/build_install_image.py --output MOS2-NAS-1.1.0.bin
+python tools/build_install_image.py --output MOS2-NAS-1.1.1.bin
 ```
 
 `src/main.cpp` contains startup and the main loop. `src/app/` separates display, collection, configuration, web, touch and update logic. `include/` contains protocol and rendering components.

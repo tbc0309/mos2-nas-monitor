@@ -43,7 +43,7 @@ void eraseUserData() {
 void setup() {
   Serial.begin(115200);
   Serial.printf("OTA layout=%02x\n", pgm_read_byte(otaContract + 10));
-  Serial.println("\nMOS2 NAS 1.1.0 boot");
+  Serial.println("\nMOS2 NAS 1.1.1 boot");
   pinMode(12, OUTPUT);
   digitalWrite(12, LOW);
   pinMode(4, INPUT_PULLUP);

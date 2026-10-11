@@ -75,11 +75,11 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         check=True,
     )
 folder = out / "MOS2-NAS-Simulator"
-shutil.copy2(args.firmware, folder / "MOS2-NAS-1.1.0.bin")
+shutil.copy2(args.firmware, folder / "MOS2-NAS-1.1.1.bin")
 shutil.copy2(root / "simulator/README.md", folder / "README.md")
 shutil.copy2(root / "NOTICE.md", folder / "NOTICE.md")
 manifest = dict(
-    version="1.1.0",
+    version="1.1.1",
     firmwareSha256=hashlib.sha256(args.firmware.read_bytes()).hexdigest(),
     commit=subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True
@@ -90,6 +90,6 @@ manifest = dict(
     json.dumps(manifest, indent=2) + "\n", encoding="utf8"
 )
 archive = shutil.make_archive(
-    str(out / "MOS2-NAS-Simulator-1.1.0-Windows"), "zip", out, folder.name
+    str(out / "MOS2-NAS-Simulator-1.1.1-Windows"), "zip", out, folder.name
 )
 print(archive)
