@@ -1,1 +1,3 @@
 pyinstaller==6.22.3
+
+pycryptodome>=3.23,<4

@@ -152,7 +152,7 @@ void draw() {
     String payload = ap ? "WIFI:T:WPA;S:" + apName + ";P:" + apPass + ";;" : address();
     showQR(payload, 52, 42, 3);
     Ui::draw(tft, ap ? apName : WiFi.localIP().toString(), 120, 187, 2, TFT_WHITE, MC_DATUM);
-    Ui::draw(tft, ap ? "Key: " + apPass : "Scan to open settings", 120, 208, 2,
+    Ui::draw(tft, ap ? "Key: " + apPass : (cfg.admin == "12345678" ? "Key: 12345678" : "Default password changed"), 120, 208, 2,
              Dashboard::c(ap ? Dashboard::ORANGE : Dashboard::CYAN), MC_DATUM);
     Ui::draw(tft, ap ? "Open 192.168.4.1" : "Touch to return", 120, 229, 2,
              Dashboard::c(ap ? Dashboard::CYAN : Dashboard::MUTED), MC_DATUM);
@@ -177,7 +177,10 @@ void draw() {
   screen.memoryAvail = metric.avail * 1024;
   screen.volumeTotal = metric.size * metric.units;
   screen.volumeUsed = metric.used * metric.units;
-  screen.source = "SNMP";
+  screen.source = cfg.snmpVersion == "3" ? "SNMPv3" : "SNMPv2c";
+  screen.security = cfg.snmpVersion == "3" ? cfg.snmpAuth +
+      (cfg.snmpPrivacy != "none" ? "+" + cfg.snmpPrivacy : String("")) : String("");
+  screen.privacy = cfg.snmpVersion == "3" && cfg.snmpPrivacy != "none";
   screen.online = metric.online;
   screen.nas = cfg.nas;
   screen.device = WiFi.localIP().toString();
@@ -189,8 +192,8 @@ void draw() {
   screen.age = metric.last ? (millis() - metric.last) / 1000 : 0;
   screen.interval = cfg.interval;
   screen.weatherEnabled = cfg.weatherEnabled;
-  screen.weatherOnline = weather.valid && weather.error.length() == 0 &&
-                         millis() - weather.fetched < cfg.weatherInterval * 120000;
+  screen.weatherOnline = weather.valid &&
+                         millis() - weather.fetched <= max(1800000u, cfg.weatherInterval * 180000u);
   screen.weatherTemp = weather.temperature;
   screen.humidity = weather.humidity;
   screen.aqi = weather.aqi;
@@ -286,7 +289,7 @@ void draw() {
       nasKey += String(nasExtra.volumeUpdated) + "/" + String(screen.volumeGroup);
     if (page == 4)
       nasKey += String(screen.age) + "/" + String(screen.uptime) + "/" + String(screen.rssi) +
-                screen.model + screen.device;
+                screen.model + screen.device + screen.security;
     if (!displayChanged && nasPaintPage == int(page) && nasPaintKey == nasKey)
       return;
   } else

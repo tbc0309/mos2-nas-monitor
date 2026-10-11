@@ -1,4 +1,5 @@
 #pragma once
+#include "sampling_policy.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #ifndef WEATHER_HOST_TEST
@@ -116,7 +117,7 @@ public:
         return finish(r, false, "Response too large");
       response += char(socket.read());
     }
-    if (millis() - started > 3500)
+    if (millis() - started > Sampling::WeatherTimeout)
       return finish(r, false, "Weather request timed out");
     if (socket.connected() || socket.available())
       return 0;

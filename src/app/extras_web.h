@@ -18,7 +18,8 @@ String volumeStatus() {
     if (i)
       j += ',';
     j += "{\"name\":" + jsonString(d.name) + ",\"total\":" + String((double)(d.size * d.units), 0) +
-         ",\"used\":" + String((double)(d.used * d.units), 0) + "}";
+         ",\"used\":" + (d.valid ? String((double)(d.used * d.units), 0) : String("null")) +
+         ",\"valid\":" + (d.valid ? "true" : "false") + "}";
   }
   return j + "]";
 }
@@ -40,7 +41,7 @@ bool tokenOK() {
     return false;
   if (web.arg("token") == csrf || web.header("X-CSRF-Token") == csrf)
     return true;
-  web.send(403, "text/plain", "Reload page");
+  web.send(403, "text/plain; charset=utf-8", WebMessages::text("Reload page", cfg.adminLanguage == "en"));
   return false;
 }
 bool slotTextOK(const String &s) {
@@ -139,13 +140,13 @@ void commitPhoto() {
   LittleFS.remove("/photo-backup.jpg");
   if (old && !LittleFS.rename(target, "/photo-backup.jpg")) {
     LittleFS.remove("/incoming.jpg");
-    web.send(500, "text/plain", "Storage error");
+    web.send(500, "text/plain; charset=utf-8", WebMessages::text("Storage error", cfg.adminLanguage == "en"));
     return;
   }
   if (!LittleFS.rename("/incoming.jpg", target)) {
     if (old)
       LittleFS.rename("/photo-backup.jpg", target);
-    web.send(500, "text/plain", "Storage error");
+    web.send(500, "text/plain; charset=utf-8", WebMessages::text("Storage error", cfg.adminLanguage == "en"));
     return;
   }
   LittleFS.remove("/photo-backup.jpg");
@@ -158,14 +159,14 @@ void registerExtras() {
       return;
     String language = web.arg("language");
     if (language != "zh" && language != "en") {
-      web.send(400, "text/plain", "Invalid language");
+      web.send(400, "text/plain; charset=utf-8", WebMessages::text("Invalid language", cfg.adminLanguage == "en"));
       return;
     }
     String previousLanguage = cfg.adminLanguage;
     cfg.adminLanguage = language;
     if (!save()) {
       cfg.adminLanguage = previousLanguage;
-      web.send(500, "text/plain", "Configuration write failed");
+      web.send(500, "text/plain; charset=utf-8", WebMessages::text("Configuration write failed", cfg.adminLanguage == "en"));
       return;
     }
     lastDisplay = -1;
@@ -178,12 +179,12 @@ void registerExtras() {
       return;
     String n = web.arg("slot");
     if (!slotTextOK(n)) {
-      web.send(400, "text/plain", "Invalid slot");
+      web.send(400, "text/plain; charset=utf-8", WebMessages::text("Invalid slot", cfg.adminLanguage == "en"));
       return;
     }
     File f = LittleFS.open(photoPath(n.toInt()), "r");
     if (!f) {
-      web.send(404, "text/plain", "No photo");
+      web.send(404, "text/plain; charset=utf-8", WebMessages::text("No photo", cfg.adminLanguage == "en"));
       return;
     }
     web.sendHeader("Cache-Control", "no-store");
@@ -196,7 +197,7 @@ void registerExtras() {
       return;
     String n = web.arg("slot");
     if (!slotTextOK(n)) {
-      web.send(400, "text/plain", "Invalid slot");
+      web.send(400, "text/plain; charset=utf-8", WebMessages::text("Invalid slot", cfg.adminLanguage == "en"));
       return;
     }
     LittleFS.remove(photoPath(n.toInt()));
@@ -220,7 +221,7 @@ void registerExtras() {
     if (!tokenOK())
       return;
     if (!alarmClock.active()) {
-      web.send(400, "text/plain", "No active alarm");
+      web.send(400, "text/plain; charset=utf-8", WebMessages::text("No active alarm", cfg.adminLanguage == "en"));
       return;
     }
     alarmTap();
@@ -242,7 +243,7 @@ void registerExtras() {
                 : a == "eight"      ? 8
                                     : 0;
     if (count < 1 || count > 8 || count == 4 || count == 7) {
-      web.send(400, "text/plain", "Invalid click count");
+      web.send(400, "text/plain; charset=utf-8", WebMessages::text("Invalid click count", cfg.adminLanguage == "en"));
       return;
     }
     handleTouch(Touch::Action(count));
@@ -259,7 +260,7 @@ void registerExtras() {
     if (!tokenOK())
       return;
     if (!resetNonce.length() || web.arg("nonce") != resetNonce || millis() - resetNonceAt > 15000) {
-      web.send(403, "text/plain", "Reset confirmation expired");
+      web.send(403, "text/plain; charset=utf-8", WebMessages::text("Reset confirmation expired", cfg.adminLanguage == "en"));
       return;
     }
     resetNonce = "";

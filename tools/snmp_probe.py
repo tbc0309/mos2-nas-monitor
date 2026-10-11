@@ -1,5 +1,6 @@
 """Read-only SNMP v2c probe; Python 3, no external packages."""
 import argparse
+import secrets
 import getpass
 import socket
 import struct
@@ -49,13 +50,13 @@ def oid_text(b):
             n = 0
     return '.'.join(map(str, result))
 
-def query(host, port, community, name, next_oid=False):
-    ident = 12345
+def query(host, port, community, name, next_oid=False, timeout=2):
+    ident = secrets.randbelow(0x7ffffffe) + 1
     varbind = tlv(48, oid(name) + tlv(5, b''))
     pdu = tlv(0xa1 if next_oid else 0xa0, integer(ident)+integer(0)+integer(0)+tlv(48,varbind))
     request = tlv(48, integer(1)+tlv(4,community.encode())+pdu)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-        udp.settimeout(2)
+        udp.settimeout(timeout)
         udp.connect((host, port))
         udp.send(request)
         packet = udp.recv(1500)

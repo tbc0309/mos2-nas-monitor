@@ -23,15 +23,20 @@ bool sessionValid() {
   return false;
 }
 bool authorized() {
-  if (sessionValid())
-    return true;
+  if (sessionValid()) {
+    if (cfg.admin != "12345678")
+      return true;
+    web.send(403, "application/json", "{\"error\":\"password_change_required\"}");
+    return false;
+  }
   web.send(401, "application/json", "{\"error\":\"login_required\"}");
   return false;
 }
 void entryPage(bool setup, const String &error = "") {
   web.sendHeader("Cache-Control", "no-store");
   String h = FPSTR(accessHTML);
-  h.replace("{{mode}}", setup ? "setup" : "login");
+  h.replace("{{mode}}",
+            setup ? "setup" : ((sessionValid() && cfg.admin == "12345678") ? "change" : "login"));
   h.replace("{{action}}", setup ? "/wifi/save" : "/login");
   h.replace("{{token}}", csrf);
   h.replace("{{ssid}}", escapeHtml(cfg.ssid));
@@ -60,6 +65,46 @@ void login() {
   web.sendHeader("Location", "/manage");
   web.send(303, "text/plain", "");
 }
+void logout() {
+  if (!sessionValid()) {
+    web.send(401, "application/json", "{\"error\":\"login_required\"}");
+    return;
+  }
+  if (web.arg("token") != csrf) {
+    web.send(403, "application/json", "{\"error\":\"csrf\"}");
+    return;
+  }
+  managementSession = "";
+  sessionSeen = 0;
+  web.sendHeader("Set-Cookie", "mos2_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+  web.send(200, "application/json", "{\"signedOut\":true}");
+}
+// The default-password session can only replace that password, never access management APIs.
+void changeDefaultPassword() {
+  if (!sessionValid() || cfg.admin != "12345678" || web.arg("token") != csrf) {
+    web.send(403, "application/json", "{\"error\":\"expired\"}");
+    return;
+  }
+  String password = web.arg("newPassword");
+  if (password.length() < 8 || password.length() > 64 || password == "12345678" ||
+      password != web.arg("confirmPassword")) {
+    web.send(400, "application/json", "{\"error\":\"passwordInvalid\"}");
+    return;
+  }
+  String previous = cfg.admin;
+  cfg.admin = password;
+  if (!save()) {
+    cfg.admin = previous;
+    web.send(500, "application/json", "{\"error\":\"saveFailed\"}");
+    return;
+  }
+  managementSession = "";
+  sessionSeen = 0;
+  web.sendHeader("Set-Cookie", "mos2_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+  web.send(200, "application/json", "{\"changed\":true}");
+  lastDisplay = -1;
+  draw(); // Refresh the management QR/password notice immediately.
+}
 void wifiSave() {
   if (!ap || web.arg("token") != csrf) {
     web.send(403, "application/json", "{\"error\":\"expired\"}");
@@ -81,6 +126,7 @@ void wifiSave() {
   web.send(200, "application/json", "{\"saved\":true}");
   reboot = true;
   rebootAt = millis();
+  rebootDelay = 6000; // Allow the captive browser to receive and paint the success instructions.
 }
 
 // Keep scans asynchronous so touch, display and captive DNS stay responsive.

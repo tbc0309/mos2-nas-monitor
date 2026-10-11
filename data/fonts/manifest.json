@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "levels": 16,
+  "bytes": 754046,
+  "crc32": 2049206613,
+  "primaryGlyphs": 514,
+  "commonGlyphs": 3865,
+  "fallbackGlyphs": 0,
+  "sizes": [
+    {
+      "cell": 12,
+      "pixels": 10,
+      "baseline": 9,
+      "bytes": 240434,
+      "intermediatePixels": 285302
+    },
+    {
+      "cell": 16,
+      "pixels": 13,
+      "baseline": 11,
+      "bytes": 347510,
+      "intermediatePixels": 384770
+    },
+    {
+      "cell": 20,
+      "pixels": 17,
+      "baseline": 14,
+      "bytes": 65208,
+      "intermediatePixels": 58024
+    },
+    {
+      "cell": 26,
+      "pixels": 23,
+      "baseline": 19,
+      "bytes": 100870,
+      "intermediatePixels": 76519
+    }
+  ]
+}

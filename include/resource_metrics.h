@@ -1,6 +1,12 @@
 #pragma once
 #include <stdint.h>
 namespace Resources {
+inline bool expireSample(uint32_t now, uint32_t &updatedAt, uint32_t deadline) {
+  if (!updatedAt || uint32_t(now - updatedAt) <= deadline)
+    return false;
+  updatedAt = 0;
+  return true;
+}
 inline float memory(uint64_t total, uint64_t free, uint64_t buffers, uint64_t cache) {
   if (!total || free > total)
     return -1;
@@ -36,8 +42,9 @@ struct Cpu {
       if (valid && total)
         result = 100.0 * double(total - idle) / total;
       seeded = true;
-    } else
-      seeded = false;
+    }
+    // A partial read must not discard the last complete baseline. The next
+    // complete snapshot can calculate an average over the longer elapsed span.
     mask = 0;
     return result;
   }
