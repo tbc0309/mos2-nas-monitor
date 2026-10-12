@@ -3,11 +3,11 @@
 #include <Arduino.h>
 
 #include <math.h>
+#include "storage_order.h"
 
 #include "gauge_pixels.h"
 
 #include "language.h"
-
 namespace Dashboard {
 
 enum Color {
@@ -34,12 +34,23 @@ enum Color {
 uint16_t palette[18] = {0x222b, 0x1188, 0xffff, 0xae3a, 0x365e, 0x87e8, 0xfacb, 0x1147,
                         0xc679, 0xfd88, 0xef9d, 0xcf15, 0xfdf7, 0x8bc7, 0x4b67, 0x21a9, 0x5d85, 0xa9e7};
 
+// Network colors are semantic and stay fixed across device/card palettes.
 // Dots/strokes use roughly 70%-brightness arrow colors; fill peaks match the arrows.
 constexpr uint16_t GraphFillGreen = 0x87e8, GraphFillRed = 0xfacb;
+inline uint16_t networkColor(Color color) {
+  switch (color) {
+  case GREEN: return 0x87e8;
+  case RED: return 0xfacb;
+  case DOTGREEN: return 0x5d85;
+  case DOTRED: return 0xa9e7;
+  default: return palette[color];
+  }
+}
 bool indexed = false;
 
 inline uint16_t c(Color color) {
-  return indexed ? uint16_t(color) : palette[color];
+  if (indexed) return uint16_t(color);
+  return palette[color];
 }
 
 struct Disk {
@@ -55,16 +66,23 @@ struct Volume {
 };
 
 struct State {
+  String machineNotice, machineLabel;
   bool privacy = false;
 
+#ifdef ESP8266
+  StorageOrder::View<Disk, 12> disks;
+  StorageOrder::View<Volume, 8> volumes;
+#else
   Disk disks[12];
   Volume volumes[8];
+#endif
   unsigned diskCount = 0, volumeCount = 0;
 
   unsigned diskGroup = 0, volumeGroup = 0;
   bool resetPending = false;
 
   unsigned animationFrame = 0;
+  uint32_t cityScrollMs = 0;
   bool showSeconds = true;
   unsigned weekday = 0;
   bool alarmEnabled = false;
@@ -96,6 +114,32 @@ struct State {
   float rxHistory[30], txHistory[30];
   unsigned historyCount = 0;
 };
+
+// Fixed city viewport, native pixels, no substring truncation or scaled glyphs.
+constexpr int CityLeft = 4, CityWidth = 96;
+inline int cityOffset(int overflow, uint32_t elapsed) {
+  if (overflow <= 0) return 0;
+  const uint32_t hold = 1200, travel = uint32_t(overflow) * 50;
+  uint32_t phase = elapsed % (2 * (hold + travel));
+  if (phase < hold) return 0;
+  if (phase < hold + travel) return (phase - hold) / 50;
+  if (phase < 2 * hold + travel) return overflow;
+  return overflow - int((phase - 2 * hold - travel) / 50);
+}
+template <class Surface> void weatherCity(Surface &s, const State &d) {
+  const String city = d.weatherCity.length() ? d.weatherCity : String("Weather");
+  const int font = Ui::chinese && Cjk::hasChinese(city) && Cjk::width(city, 4) <= CityWidth ? 4 : 3;
+  const int width = Cjk::width(city, font);
+  const int left = width <= CityWidth ? CityLeft + (CityWidth-width)/2
+                                      : CityLeft-cityOffset(width-CityWidth,d.cityScrollMs);
+  const int oldLeft=Cjk::clipLeft, oldRight=Cjk::clipRight;
+  Cjk::clipLeft=CityLeft; Cjk::clipRight=CityLeft+CityWidth;
+#ifdef NATIVE_UI
+  s.noteText(city,left,31-Cjk::sizeOf(font)/2,c(WHITE),TL_DATUM);
+#endif
+  Cjk::draw(s,city,left,31-Cjk::sizeOf(font)/2,font,c(WHITE),TL_DATUM);
+  Cjk::clipLeft=oldLeft; Cjk::clipRight=oldRight;
+}
 
 inline String pct(float n) {
   return n < 0 ? "--" : String(n, 1) + "%";
@@ -165,27 +209,32 @@ template <class T> void bar(T &s, int x, int y, int w, float value, Color color)
 }
 
 template <class T> void card(T &s, int x, int y, int w, int h) {
+  // Establish the surface even for off-screen tiles. Otherwise a skipped card
+  // leaves the previous row's foreground/border colors active.
+  Cjk::background = c(PANEL);
   if (y >= Cjk::clipBottom || y + h <= Cjk::clipTop)
     return;
   s.fillRoundRect(x, y, w, h, 7, c(TRACK));
   s.fillRoundRect(x + 1, y + 1, w - 2, h - 2, 6, c(PANEL));
 }
 template <class T> void arrow(T &s, int x, int y, bool up, Color color) {
-  s.fillRect(x + 4, y + (up ? 5 : 0), 4, 9, c(color));
+  const uint16_t fixed = networkColor(color);
+  s.fillRect(x + 4, y + (up ? 5 : 0), 4, 9, fixed);
   if (up)
-    s.fillTriangle(x + 1, y + 6, x + 10, y + 6, x + 6, y, c(color));
+    s.fillTriangle(x + 1, y + 6, x + 10, y + 6, x + 6, y, fixed);
   else
-    s.fillTriangle(x + 1, y + 7, x + 10, y + 7, x + 6, y + 13, c(color));
-  s.fillRect(x, y + 14, 12, 2, c(color));
-  s.fillRect(x, y + 11, 2, 4, c(color));
-  s.fillRect(x + 10, y + 11, 2, 4, c(color));
+    s.fillTriangle(x + 1, y + 7, x + 10, y + 7, x + 6, y + 13, fixed);
+  s.fillRect(x, y + 14, 12, 2, fixed);
+  s.fillRect(x, y + 11, 2, 4, fixed);
+  s.fillRect(x + 10, y + 11, 2, 4, fixed);
 }
 template <class T> void largeArrow(T &s, int x, int y, bool up, Color color) {
-  s.fillRect(x + 7, y + (up ? 8 : 0), 7, 16, c(color));
+  const uint16_t fixed = networkColor(color);
+  s.fillRect(x + 7, y + (up ? 8 : 0), 7, 16, fixed);
   if (up)
-    s.fillTriangle(x, y + 10, x + 21, y + 10, x + 10, y, c(color));
+    s.fillTriangle(x, y + 10, x + 21, y + 10, x + 10, y, fixed);
   else
-    s.fillTriangle(x, y + 14, x + 21, y + 14, x + 10, y + 24, c(color));
+    s.fillTriangle(x, y + 14, x + 21, y + 14, x + 10, y + 24, fixed);
 }
 // NAS values: primary 20px, detail 16px, auxiliary 12px.
 inline String rateLabel(float n) {
@@ -246,7 +295,8 @@ template <class T> void graph(T &s, const State &d, int x, int y, int w, int h) 
       int base = v ? y + h - 6 : y + h / 2 - 4;
       float peak = value > 1024 ? value : 1024;
       int amplitude = v ? h - h / 2 - 10 : h / 2 - 10;
-      s.fillCircle(x + w - 6, base - int(value / peak * amplitude), 3, c(v ? DOTRED : DOTGREEN));
+      s.fillCircle(x + w - 6, base - int(value / peak * amplitude), 3,
+                   networkColor(v ? DOTRED : DOTGREEN));
     }
     return;
   }
@@ -265,6 +315,7 @@ template <class T> void graph(T &s, const State &d, int x, int y, int w, int h) 
   const int amplitude[2] = {h / 2 - 10, h - h / 2 - 10};
   for (int k = 1; k < 4; k++)
     s.drawFastHLine(x + 5, y + k * h / 4, w - 10, c(GRID));
+  const uint16_t fillColors[] = {GraphFillGreen, GraphFillRed};
   // Interpolate the exact integer endpoints, with no row-grid gaps.
   for (int xx = 0; xx <= span; xx++) {
     unsigned k = 0;
@@ -283,7 +334,7 @@ template <class T> void graph(T &s, const State &d, int x, int y, int w, int h) 
         // Fill peaks at 50% dot-color opacity; the polyline remains fully opaque.
         int fade = depth ? 255 * (base[v] - yy) / depth : 255;
         int alpha = 18 + 237 * fade * (128 + fade / 2) / 65025;
-        uint16_t shade = mixColor(v ? GraphFillRed : GraphFillGreen, c(GRAPH), alpha);
+        uint16_t shade = mixColor(fillColors[v], c(GRAPH), alpha);
         s.fillRect(x + 6 + xx, yy, 1, yy < base[v] ? 2 : 1, shade);
       }
     }
@@ -296,12 +347,12 @@ template <class T> void graph(T &s, const State &d, int x, int y, int w, int h) 
       if (values[start + k] < 0 || values[start + k - 1] < 0) continue;
       int xp = x + 6 + k * span / (count - 1), yp = base[v] - int(values[start + k] / peak[v] * amplitude[v]);
       int x0 = x + 6 + (k - 1) * span / (count - 1), y0 = base[v] - int(values[start + k - 1] / peak[v] * amplitude[v]);
-      s.drawLine(x0, y0, xp, yp, c(color));
+      s.drawLine(x0, y0, xp, yp, networkColor(color));
     }
     for (unsigned k = 0; k < count; k++) {
       if (values[start + k] < 0) continue;
       int xp = x + 6 + k * span / (count - 1), yp = base[v] - int(values[start + k] / peak[v] * amplitude[v]);
-      s.fillCircle(xp, yp, 3, c(color));
+      s.fillCircle(xp, yp, 3, networkColor(color));
     }
   }
 }
@@ -401,6 +452,13 @@ template <class T> void render(T &s, const State &d, unsigned page) {
   Cjk::background = c(BG);
   s.fillScreen(c(BG));
 
+  if (d.machineNotice.length() && !d.resetPending) {
+    s.fillRoundRect(8, 82, 224, 65, 8, c(PANEL));
+    Cjk::background = c(PANEL);
+    Ui::draw(s, d.machineLabel, 120, 97, 1, c(CYAN), MC_DATUM);
+    Ui::draw(s, d.machineNotice, 120, 125, 2, c(WHITE), MC_DATUM);
+    return;
+  }
   if (d.resetPending) {
 
     Ui::draw(s, "RESET DEVICE?", 120, 48, 3, c(RED), MC_DATUM);
@@ -459,11 +517,11 @@ template <class T> void render(T &s, const State &d, unsigned page) {
     }
 
     int code = d.weatherCode;
-    if (code == 8 || code == 21 || code == 22)
+    if (code == 8 || code == 21 || code == 22 || code == 301)
       code = 7;
     else if (code == 10 || code == 23 || code == 24)
       code = 9;
-    else if (code == 12 || code == 25 || code == 301)
+    else if (code == 12 || code == 25)
       code = 11;
     else if (code == 26)
       code = 14;
@@ -475,24 +533,23 @@ template <class T> void render(T &s, const State &d, unsigned page) {
       code = 53;
 
     OriginalAssets::weather(s, code);
-    String city = d.weatherCity.length() ? d.weatherCity : "Weather loading...";
-    Ui::draw(s, city, 59, 31, Cjk::width(city, 4) <= 88 ? 4 : 3, c(WHITE), MC_DATUM);
+    weatherCity(s, d);
 
-    Color air = d.aqi > 150 ? RED : d.aqi > 50 ? ORANGE : GREEN;
+    Color air = d.aqi < 0 ? TRACK : d.aqi > 150 ? RED : d.aqi > 50 ? ORANGE : GREEN;
     s.fillRoundRect(104, 18, 50, 24, 4, c(air));
 
     Cjk::background = c(air);
     Ui::draw(s,
-             Ui::chinese ? (d.aqi > 150   ? "重度"
-                            : d.aqi > 100 ? "轻度"
-                            : d.aqi > 50  ? "良"
-                                          : "优")
+             d.aqi < 0 ? String("--") : Ui::chinese ? (d.aqi > 300 ? "严重"
+                            : d.aqi > 200 ? "重度" : d.aqi > 150 ? "中度"
+                            : d.aqi > 100 ? "轻度" : d.aqi > 50 ? "良" : "优")
                          : "AQI " + String(d.aqi),
              129, 31, 3, c(BG), MC_DATUM);
     Cjk::background = c(BG);
 
+    const int weatherFont = (Cjk::width(d.weatherCondition, 4) <= 164 && Cjk::width(d.weatherWind, 4) <= 164) ? 4 : 3;
     String weatherLine = (time[7] - '0') % 6 < 3 ? d.weatherCondition : d.weatherWind;
-    Ui::draw(s, weatherLine, 84, 61, Cjk::width(weatherLine, 4) <= 164 ? 4 : 3, c(WHITE), MC_DATUM);
+    Ui::draw(s, weatherLine, 84, 61, weatherFont, c(WHITE), MC_DATUM);
 
     temperature(s, d.weatherTemp, 128, 197, 3, MC_DATUM, WHITE, 0);
     Ui::draw(s, d.humidity >= 0 ? String(d.humidity, 0) + "%" : "--", 128, 227, 3, c(WHITE),
@@ -549,7 +606,7 @@ template <class T> void render(T &s, const State &d, unsigned page) {
     }
     Cjk::background = c(BG);
     if (!d.diskCount)
-      text(s, "Discovering disks...", 10, 70, 2, MUTED);
+      text(s, d.model == "FNOS" || d.model == "OpenWrt" ? "No SMART data" : "Discovering disks...", 10, 70, 2, MUTED);
     text(s, String(d.diskCount) + Ui::tr(" drives"), 10, 201, 1, MUTED);
     if (d.diskCount > 4)
       right(s, "Double tap: more", 230, 201, 1, MUTED);
@@ -570,7 +627,10 @@ template <class T> void render(T &s, const State &d, unsigned page) {
       Cjk::background = c(PANEL);
       float used = v.valid && v.size ? 100.0 * v.used / v.size : -1;
 
-      text(s, v.name, 10, y, 2, CYAN);
+      String volumeLabel = v.name;
+      if (v.name.startsWith("/volumeUSB")) volumeLabel = "USB " + v.name.substring(10, v.name.length());
+      if (volumeLabel.length() > 20) volumeLabel = volumeLabel.substring(0, 17) + "...";
+      text(s, volumeLabel, 10, y, 2, CYAN);
       metricRight(s, pct(used), 230, y, 2);
       bar(s, 10, y + 23, 220, used, used >= 90 ? RED : GREEN);
       metricText(s, (v.valid ? capacity(v.used * v.units) : String("--")) + " / " +
@@ -589,9 +649,9 @@ template <class T> void render(T &s, const State &d, unsigned page) {
   if (page == 0) {
 
     largeArrow(s, 8, 6, false, GREEN);
-    rateText(s, overviewRateLabel(d.rx), 33, 6, 4);
+    if (Cjk::clipBottom > 6 && Cjk::clipTop < 32) rateText(s, overviewRateLabel(d.rx), 33, 6, 4);
     largeArrow(s, 128, 6, true, RED);
-    rateText(s, overviewRateLabel(d.tx), 153, 6, 4);
+    if (Cjk::clipBottom > 6 && Cjk::clipTop < 32) rateText(s, overviewRateLabel(d.tx), 153, 6, 4);
 
     graph(s, d, 8, 38, 224, 74);
 
@@ -600,11 +660,11 @@ template <class T> void render(T &s, const State &d, unsigned page) {
     s.fillCircle(186, 165, 43, c(PANEL));
     Cjk::background = c(PANEL);
     text(s, "CPU", 10, 126, 2);
-    metricRight(s, pct(d.cpu), 133, 124, 4);
+    if (Cjk::clipBottom > 124 && Cjk::clipTop < 150) metricRight(s, pct(d.cpu), 133, 124, 4);
     bar(s, 10, 151, 123, d.cpu, CYAN);
 
     text(s, "Memory", 10, 166, 2);
-    metricRight(s, d.memory < 0 ? "--" : String(d.memory, 0) + "%", 133, 164, 4);
+    if (Cjk::clipBottom > 164 && Cjk::clipTop < 190) metricRight(s, d.memory < 0 ? "--" : String(d.memory, 0) + "%", 133, 164, 4);
     bar(s, 10, 191, 123, d.memory, CYAN);
 
     gauge(s, d.temp, 186, 165, 41);
@@ -626,10 +686,10 @@ template <class T> void render(T &s, const State &d, unsigned page) {
     Cjk::background = c(PANEL);
     largeArrow(s, 12, 41, false, GREEN);
     text(s, "RECEIVE", 40, 45, Ui::chinese ? 2 : 1, MUTED);
-    throughput(s, d.rx, 228 - Cjk::width(rateLabel(d.rx), 4), 41, 4);
+    if (Cjk::clipBottom > 41 && Cjk::clipTop < 67) throughput(s, d.rx, 228 - Cjk::width(rateLabel(d.rx), 4), 41, 4);
     largeArrow(s, 12, 76, true, RED);
     text(s, "SEND", 40, 80, Ui::chinese ? 2 : 1, MUTED);
-    throughput(s, d.tx, 228 - Cjk::width(rateLabel(d.tx), 4), 76, 4);
+    if (Cjk::clipBottom > 76 && Cjk::clipTop < 102) throughput(s, d.tx, 228 - Cjk::width(rateLabel(d.tx), 4), 76, 4);
     Cjk::background = c(BG);
     graph(s, d, 8, 112, 224, 70);
     text(s, "IF: " + d.iface, 10, 192, 2, MUTED);
@@ -641,15 +701,15 @@ template <class T> void render(T &s, const State &d, unsigned page) {
     card(s, 6, 136, 228, 49);
     Cjk::background = c(PANEL);
     text(s, "CPU usage", 10, 43, 2, MUTED);
-    metricRight(s, pct(d.cpu), 230, 40, 4);
+    if (Cjk::clipBottom > 40 && Cjk::clipTop < 66) metricRight(s, pct(d.cpu), 230, 40, 4);
     bar(s, 10, 72, 220, d.cpu, CYAN);
     text(s, "Memory usage", 10, 93, 2, MUTED);
-    metricRight(s, pct(d.memory), 230, 90, 4);
+    if (Cjk::clipBottom > 90 && Cjk::clipTop < 116) metricRight(s, pct(d.memory), 230, 90, 4);
     bar(s, 10, 122, 220, d.memory, CYAN);
     text(s, "Used", 10, 143, 2, MUTED);
-    metricRight(s, d.memoryTotal && d.memory >= 0 ? capacity(d.memoryTotal - d.memoryAvail) : "--", 230, 141, 3);
+    if (Cjk::clipBottom > 141 && Cjk::clipTop < 161) metricRight(s, d.memoryTotal && d.memory >= 0 ? capacity(d.memoryTotal - d.memoryAvail) : "--", 230, 141, 3);
     text(s, "Total", 10, 167, 2, MUTED);
-    metricRight(s, d.memoryTotal ? capacity(d.memoryTotal) : "--", 230, 165, 3);
+    if (Cjk::clipBottom > 165 && Cjk::clipTop < 185) metricRight(s, d.memoryTotal ? capacity(d.memoryTotal) : "--", 230, 165, 3);
     Cjk::background = c(BG);
     text(s, "RAM excludes buffers/cache", 10, 195, 1, MUTED);
 
@@ -657,29 +717,41 @@ template <class T> void render(T &s, const State &d, unsigned page) {
     header(s, d, "DEVICE / STATUS");
     card(s, 6, 36, 228, 130);
     Cjk::background = c(PANEL);
-    text(s, d.model.length() ? d.model : "Synology NAS", 10, 42, 3, WHITE);
-    // Group colors by function: addresses, wireless link, system uptime.
-    const String labels[] = {"NAS", Ui::tr("Up"), "MOS2", Ui::tr("WiFi")};
+    if (Cjk::clipBottom > 42 && Cjk::clipTop < 62)
+      text(s, d.model.length() ? d.model : "SNMP", 10, 42, Cjk::width(d.model,3)>220?2:3, WHITE);
+    // Layout is language-dependent, not data-dependent; calculate it once.
+    static int valueColumns[2] = {0,0};
+    int &valueX = valueColumns[Ui::chinese ? 1 : 0];
+    const char* labels[] = {"Device", "Up", "MOS2", "WiFi"};
     const Color rowColors[] = {CYAN, WHITE, CYAN, MUTED};
-    int valueX = 10;
-    for (const auto &label : labels) {
-      int edge = 18 + Cjk::width(label, 2); if (edge > valueX) valueX = edge;
+    if (!valueX) {
+      valueX = 10;
+      for (const auto label : labels) {
+        int edge = 18 + Cjk::width(Ui::tr(label), 2);
+        if (edge > valueX) valueX = edge;
+      }
     }
-    const String values[] = {d.nas,
-      String(d.uptime / 86400) + Ui::tr("d ") + String((d.uptime / 3600) % 24) + Ui::tr("h"),
-      d.device, String(d.rssi) + " dBm"};
     for (unsigned row = 0; row < 4; ++row) {
-      int y = 73 + 23 * row;
+      const int y = 73 + 23 * row;
+      if (y >= Cjk::clipBottom || y + 16 <= Cjk::clipTop) continue;
+      String value;
+      if (row == 0) value = d.nas;
+      else if (row == 1) value = !d.uptime ? Ui::tr("WAIT") : d.uptime<3600 ?
+        String(d.uptime/60)+Ui::tr("min ")+String(d.uptime%60)+Ui::tr("sec") :
+        String(d.uptime/86400)+Ui::tr("day ")+String((d.uptime/3600)%24)+Ui::tr("hr");
+      else if (row == 2) value = d.device;
+      else value = String(d.rssi) + " dBm";
       text(s, labels[row], 10, y, 2, rowColors[row]);
-      text(s, values[row], valueX, y, 2, rowColors[row]);
+      text(s, value, valueX, y, 2, rowColors[row]);
     }
-    // SNMP is a separate status block; its entire line follows connection state.
     card(s, 6, 171, 228, 26);
     Cjk::background = c(PANEL);
-    String snmpStatus = d.source + " " + (d.online ? Ui::tr("OK") +
-      (d.security.length() ? " " + d.security : String("")) :
-      Ui::tr("No response") + (d.age ? " " + String(d.age) + Ui::tr("s") : String("")));
-    text(s, snmpStatus, 10, 176, 2, d.online ? GREEN : ORANGE);
+    if (Cjk::clipBottom > 176 && Cjk::clipTop < 192) {
+      String snmpStatus = d.source + " " + (d.online ? Ui::tr("OK") +
+        (d.security.length() ? " " + d.security : String("")) :
+        Ui::tr("No response") + (d.age ? " " + String(d.age) + Ui::tr("s") : String("")));
+      text(s, snmpStatus, 10, 176, 2, d.online ? GREEN : ORANGE);
+    }
     Cjk::background = c(BG);
     text(s, "5 taps: management QR", 10, 200, 1, MUTED);
   }

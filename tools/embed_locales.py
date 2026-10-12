@@ -20,6 +20,10 @@ keys.update(
         (root / "web/management.js").read_text(encoding="utf8"),
     )
 )
+# Dynamic group headings and accessible reorder labels also need both languages.
+management_js = (root / "web/management.js").read_text(encoding="utf8")
+keys.update(re.findall(r"\['([^']+)',\[", management_js))
+keys.update(re.findall(r"\['[↑↓]',-?1,'([^']+)'\]", management_js))
 for language, messages in locales.items():
     if set(messages) != set(locales["en"]):
         raise ValueError(f"Different {language} language keys")

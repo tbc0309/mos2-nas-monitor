@@ -1,6 +1,8 @@
 #pragma once
 namespace Ui {
 inline String tr(const String& label){if(!chinese)return label;
+ if(label=="No SMART data")return "无健康数据";
+ if(label=="Device")return "设备";
  if(label=="OK")return "正常";
  if(label=="No response")return "无回复";
  if(label=="s")return "秒";
@@ -19,6 +21,10 @@ inline String tr(const String& label){if(!chinese)return label;
  if(label==" volumes")return " 个卷";
  if(label=="d ")return "天 ";
  if(label=="h")return "小时";
+ if(label=="min ")return "分 ";
+ if(label=="sec")return "秒";
+ if(label=="day ")return "天 ";
+ if(label=="hr")return "小时";
  if(label==" OK ")return " 正常 ";
  if(label=="s ago")return " 秒前";
  if(label==" WAIT")return " 等待";
@@ -49,6 +55,7 @@ inline String tr(const String& label){if(!chinese)return label;
  if(label=="Waiting for samples")return "等待采样";
  if(label=="TOUCH")return "触摸";
  if(label=="NAS TEMP")return "温度";
+ if(label=="Device")return "设备";
  if(label=="OK")return "正常";
  if(label=="CHECK")return "检查";
  if(label=="ALARM")return "闹钟";

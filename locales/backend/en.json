@@ -19,5 +19,12 @@
   "No photo": "No photo",
   "No active alarm": "No active alarm",
   "Invalid click count": "Invalid click count",
-  "Reset confirmation expired": "Reset confirmation expired"
+  "Reset confirmation expired": "Reset confirmation expired",
+  "Connect to Wi-Fi": "Connect to Wi-Fi",
+  "Sign in": "Sign in",
+  "Save & connect": "Save & connect",
+  "Saved.": "Saved.",
+  "Verify the city code before saving.": "Verify the city code before saving.",
+  "Saved. Applied immediately.": "Saved. Applied immediately.",
+  "Saved. Sign in with the new password.": "Saved. Sign in with the new password."
 }

@@ -245,7 +245,7 @@ struct Session {
     Bytes body = integer(1);
     append(body, tlv(4, {}));
     append(body, tlv(0xa2, slice(b, m.pdu)));
-    return decode(tlv(48, body), request, out);
+    return decode(tlv(48, body), request, out, true);
   }
   int accept(Bytes &b, uint32_t id, uint32_t request, bool discovery, Value &out) {
     Message m;

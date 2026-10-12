@@ -9,12 +9,14 @@ enum Action {
   Unused = 4,
   Management = 5,
   Setup = 6,
-  Reset = 8
+  Reset = 8,
+  NextMachine = 9
 };
 class Button {
   bool raw = false, stable = false;
   uint32_t changed = 0, pressed = 0, lastTap = 0;
   unsigned taps = 0;
+  bool held = false;
 
 public:
   void clearBurst() {
@@ -25,14 +27,20 @@ public:
       raw = down;
       changed = now;
     }
-    if (raw != stable && uint32_t(now - changed) >= 30) {
+    if (raw != stable && uint32_t(now - changed) >= (stable && uint32_t(now - pressed) >= 500 ? 120u : 30u)) {
       stable = raw;
-      if (stable)
-        pressed = now;
-      else if (uint32_t(now - pressed) >= 40 && uint32_t(now - pressed) < 1500) {
+      if (stable) {
+        pressed = changed;
+        held = false;
+      } else if (!held && uint32_t(changed - pressed) >= 2000) {
+        held = true; taps = 0; return NextMachine;
+      } else if (!held && uint32_t(now - pressed) >= 40 && uint32_t(now - pressed) < 1500) {
         taps++;
         lastTap = now;
       }
+    }
+    if (stable && raw && !held && uint32_t(now - pressed) >= 2000) {
+      held = true; taps = 0; return NextMachine;
     }
     // Resolve a complete burst only after release, never navigate between clicks.
     if (taps && !raw && !stable && uint32_t(now - lastTap) >= 350) {
@@ -41,6 +49,24 @@ public:
       return count <= 8 && count != 4 && count != 7 ? Action(count) : None;
     }
     return None;
+  }
+};
+// Bounded FIFO prevents later drawing samples from replacing earlier gestures.
+class Actions {
+  Action items[8] = {};
+  unsigned head = 0, tail = 0;
+public:
+  unsigned dropped = 0;
+  bool pending() const { return tail!=head; }
+  void push(Action a) {
+    if (a == None) return;
+    unsigned next = (head + 1) % 8;
+    if (next == tail) { ++dropped; return; }
+    items[head] = a; head = next;
+  }
+  Action pop() {
+    if (tail == head) return None;
+    Action a = items[tail]; tail = (tail + 1) % 8; return a;
   }
 };
 class ResetConfirmation {

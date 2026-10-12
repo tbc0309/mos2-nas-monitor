@@ -1,47 +1,25 @@
 """Generate native-hinted W7 16-level filesystem resources. Set FONT_PATH.
 
-Native W7 covers all common Chinese at small sizes and every UI glyph at all sizes.
+Native W7 covers screen strings plus an explicit geography/weather extension.
 Regenerate the resource and matching firmware index together.
 """
 
 from pathlib import Path
-import json, math, os, re, struct, zlib
+import math, os
 import freetype as ft
 
 root = Path(__file__).resolve().parents[1]
-index_path = root / "include/font_index.h"
-pack_path = root / "data/fonts/ui04.bin"
-old = index_path.read_text(encoding="utf8")
+from font_charset import required_codes
 font_path = Path(os.environ.get("FONT_PATH", "TencentSans-W7.ttf"))
 if not font_path.is_file():
     raise SystemExit("Set FONT_PATH to your licensed Tencent Sans W7 font.")
-
-
-def table(name):
-    return list(
-        map(int, re.search(r"\b" + name + r"\[.*?=\{(.*?)\};", old, re.S)[1].split(","))
-    )
-
-
-# Broad coverage for city names and dynamic small labels; all UI glyphs at large sizes.
-core = set(table("codes20")) | set(range(32, 127))
-for folder in [root / "include", root / "src", root / "simulator"]:
-    for path in folder.rglob("*"):
-        if path.suffix not in (".h", ".cpp", ".json") or path.name == "font_index.h":
-            continue
-        core.update(ord(ch) for ch in path.read_text(encoding="utf8") if 0x4e00 <= ord(ch) <= 0x9fff or 0x3000 <= ord(ch) <= 0x303f or 0xff00 <= ord(ch) <= 0xffef)
-codes = sorted(set(table("codes")) | core)
-core = sorted(core)
-payload = bytearray()
-lines = ["#pragma once", "#include <Arduino.h>", "namespace Cjk {"]
-for name, values in [("codes", codes), ("codes20", core)]:
-    lines.append(
-        f"const uint16_t {name}[] PROGMEM={{" + ",".join(map(str, values)) + "};"
-    )
+# One compact alphabet at every size; no legacy bitmap/font bank is retained.
+codes = required_codes()
+core = codes
+rasters = {}
 face = ft.Face(str(font_path))
 flags = ft.FT_LOAD_RENDER | ft.FT_LOAD_TARGET_NORMAL
 audit = []
-locations = {}
 for cell, request in [(12, 11), (16, 14), (20, 20), (26, 24)]:
     glyphs = codes if cell < 20 else core
     for pixels in range(request, 6, -1):
@@ -108,18 +86,7 @@ for cell, request in [(12, 11), (16, 14), (20, 20), (26, 24)]:
                     )
             i += n
         offsets.append(len(data))
-    locations[f"resourceData{cell}"] = 24 + len(payload)
-    payload.extend(data)
-    lines.extend(
-        [
-            f"const uint32_t offsets{cell}[] PROGMEM={{"
-            + ",".join(map(str, offsets))
-            + "};",
-            f"const uint8_t advances{cell}[] PROGMEM={{"
-            + ",".join(map(str, advances))
-            + "};",
-        ]
-    )
+    rasters[cell] = (bytes(data), offsets, advances)
     audit.append(
         dict(
             cell=cell,
@@ -129,30 +96,5 @@ for cell, request in [(12, 11), (16, 14), (20, 20), (26, 24)]:
             intermediatePixels=middle,
         )
     )
-crc = zlib.crc32(payload)
-resource = struct.pack("<8s4I", b"MOSFONT2", 24 + len(payload), crc, 2, 16) + payload
-lines.extend(f"const uint32_t {name}={value}u;" for name, value in locations.items())
-lines.extend(
-    [f"const uint32_t resourceBytes={len(resource)}u,resourceCrc={crc}u;", "}"]
-)
-assert len(resource) <= 1600 * 1024, "Reserve space for seven photos and user data"
-pack_path.write_bytes(resource)
-index_path.write_text("\n".join(lines), encoding="utf8")
-(pack_path.parent / "manifest.json").write_text(
-    json.dumps(
-        dict(
-            version=2,
-            levels=16,
-            bytes=len(resource),
-            crc32=crc,
-            primaryGlyphs=len(core),
-            commonGlyphs=len(codes),
-            fallbackGlyphs=0,
-            sizes=audit,
-        ),
-        indent=2,
-    )
-    + "\n",
-    encoding="utf8",
-)
-print("W7 resource:", len(resource), "bytes, CRC32", hex(crc), "glyphs", len(core))
+from font_banks import write_banks
+write_banks(root, codes, rasters, audit)

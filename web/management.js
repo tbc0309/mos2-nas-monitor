@@ -1,97 +1,1000 @@
-
-let firmwareBusy=false;
-const form=document.getElementById('settings');for(const [k,v] of Object.entries(config)){if(form.elements[k])form.elements[k].value=v;}
-if(config.iface){form.elements.iface.add(new Option(config.iface,config.iface));form.elements.iface.value=config.iface;}
-let lang=config.adminLanguage||'zh';const msg=key=>I18n.text(key,lang);
-function translate(){document.documentElement.lang=lang==='en'?'en':'zh-CN';document.getElementById('language').value=lang;I18n.apply(document,lang);updateWifiLabels();document.getElementById('cityCodeLookup').title=msg("Search for a city on China Weather. The nine digits in its weather page URL are the city code.");document.getElementById('crop').setAttribute('aria-label',msg("Photo crop preview"));if(typeof photo!=='undefined')refreshAlbum();tick();}
-document.getElementById('language').onchange=async e=>{const previous=lang;lang=e.target.value;translate();const r=await post('/api/language',{language:lang});if(!r.ok){lang=previous;translate();}};
-document.querySelectorAll('.day').forEach(c=>{c.checked=!!((config.alarmDays??31)&+c.value);c.onchange=()=>{form.elements.alarmDays.value=[...document.querySelectorAll('.day:checked')].reduce((n,c)=>n|+c.value,0);};});
-const originals=new Map([...form.querySelectorAll('input,select')].map(el=>[el,el.type==='checkbox'?el.checked:el.value]));
- function dirty(){for(const card of form.querySelectorAll('section'))card.classList.toggle('dirty',[...card.querySelectorAll('input,select')].some(el=>(el.type==='checkbox'?el.checked:el.value)!==originals.get(el)));}
- form.addEventListener('input',dirty);form.addEventListener('change',dirty);
- form.onsubmit=async e=>{e.preventDefault();const message=document.getElementById('message'),button=document.querySelector('#settingsActions button');if(!+form.elements.alarmDays.value){message.textContent=msg("Select at least one weekday");return;}button.disabled=true;message.textContent=msg("Saving…");try{const response=await fetch(form.action,{method:'POST',body:new URLSearchParams(new FormData(form))});const content=await response.text();message.textContent=(response.headers.get('Content-Type')||'').includes('text/html')?(response.ok?msg("Saved."):msg("Failed")):content;message.style.color=response.ok?'#147e87':'#b84b42';if(response.ok)setTimeout(()=>location.reload(),8000);else button.disabled=false;}catch(error){message.textContent=msg("Failed");message.style.color='#b84b42';button.disabled=false;}};
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));['screen','photos','maintenance'].forEach(n=>document.getElementById('tab-'+n).classList.toggle('hidden',b.dataset.tab!==n));form.classList.toggle('hidden',b.dataset.tab!=='settings');document.getElementById('settingsActions').classList.toggle('hidden',b.dataset.tab!=='settings');if(b.dataset.tab==='settings'&&!wifiScanned)scanManagementWifi();});
-const format=(v,u)=>v<0||v==null?'--':v.toFixed(1)+u;const rate=v=>v<0?'--':v>=1048576?(v/1048576).toFixed(1)+' MB/s':(v/1024).toFixed(1)+' KB/s';
-function weatherOptions(){const enabled=form.elements.weatherEnabled.value==='1';form.elements.home.querySelector('option[value="5"]').disabled=!enabled;document.getElementById('weatherPage').disabled=!enabled;if(!enabled&&form.elements.home.value==='5')form.elements.home.value='6';}form.elements.weatherEnabled.onchange=weatherOptions;weatherOptions();
-async function tick(){if(firmwareBusy)return;try{const response=await fetch('/api/status',{cache:'no-store'});if(response.status===401){location.href='/manage';return;}const d=await response.json();updateInterfaces(d);updateCurrentWifi(d);document.getElementById('state').textContent=d.online?msg("Online"):msg("Offline");for(const k of ['cpu','memory'])document.getElementById(k).textContent=format(d[k],'%');document.getElementById('temperature').textContent=format(d.temperature,'°C');document.getElementById('traffic').textContent=rate(d.rx)+' / '+rate(d.tx);document.getElementById('traffic').style.fontSize='15px';document.getElementById('details').textContent=(d.model||'NAS')+' · '+(d.interface||'--')+' · '+(d.disks||[]).length+msg(" disks / ")+(d.volumes||[]).length+msg(" volumes");const w=d.weather;document.getElementById('weatherDetails').textContent=w&&w.valid?(lang==='en'?(w.cityEnglish||'Tianjin')+' · '+(w.conditionEnglish||''):(w.city||'')+' · '+(w.condition||''))+' · '+w.temperature+'°C · '+w.humidity+'%':msg("Waiting for weather");const a=d.alarm;if(a)document.getElementById('alarmDetails').textContent=[msg("Idle"),msg("Ringing"),msg("Snoozed"),msg("Dismissed today")][a.state]+(a.state===2?' · '+a.remaining+'s':'');}catch(e){document.getElementById('state').textContent=msg("Disconnected");}}
-async function post(path,data={}){return fetch(path,{method:'POST',body:new URLSearchParams({...data,token:form.elements.token.value})});}
-async function setPage(page){await post('/api/page',{page});tick();}
-async function testBeep(){const r=await post('/api/beep');document.getElementById('message').textContent=r.ok?msg("Sound sent"):msg("Failed");}
-async function alarmAction(a){const r=await post('/api/alarm/'+a,{tune:form.elements.alarmTune.value});if(!r.ok)document.getElementById('alarmDetails').textContent=msg("No active alarm");else tick();}
-async function resetSettings(){const r=await post('/api/reset/request');if(!r.ok)return;const d=await r.json();if(!confirm(msg("Clear all settings and photos? This cannot be undone.")))return;const done=await post('/api/reset/confirm',{nonce:d.nonce});if(done.ok){alert(msg("Reset complete. Reconnect to the device Wi-Fi."));location.reload();}}
-const crop=document.getElementById('crop'),cropCtx=crop.getContext('2d');let photo=null,angle=0,zoom=1,offsetX=0,offsetY=0,drag=null;
-let albumEntries=[];
-function drawCrop(){cropCtx.fillStyle='#0b1421';cropCtx.fillRect(0,0,240,240);if(!photo)return;let w=angle%180?photo.height:photo.width,h=angle%180?photo.width:photo.height,scale=Math.max(240/w,240/h)*zoom;offsetX=Math.max(-(w*scale-240)/2,Math.min((w*scale-240)/2,offsetX));offsetY=Math.max(-(h*scale-240)/2,Math.min((h*scale-240)/2,offsetY));cropCtx.save();cropCtx.translate(120+offsetX,120+offsetY);cropCtx.rotate(angle*Math.PI/180);cropCtx.scale(scale,scale);cropCtx.drawImage(photo,-photo.width/2,-photo.height/2);cropCtx.restore();}
-function resetCrop(){zoom=1;offsetX=offsetY=0;document.getElementById('zoom').value=1;drawCrop();}
-function rotatePhoto(){angle=(angle+90)%360;resetCrop();}
-document.getElementById('zoom').oninput=e=>{zoom=+e.target.value;drawCrop();};
-document.getElementById('photoFile').onchange=e=>{const file=e.target.files[0];if(!file)return;const url=URL.createObjectURL(file),img=new Image();img.onload=()=>{photo=img;angle=0;resetCrop();URL.revokeObjectURL(url);document.getElementById('uploadPhoto').disabled=!document.getElementById('photoSlot').value;};img.onerror=()=>{URL.revokeObjectURL(url);document.getElementById('photoMessage').textContent=msg("Cannot open photo");};img.src=url;};
-crop.onpointerdown=e=>{if(!photo)return;drag=[e.clientX,e.clientY,offsetX,offsetY];crop.setPointerCapture(e.pointerId);};crop.onpointermove=e=>{if(!drag)return;offsetX=drag[2]+(e.clientX-drag[0])*240/crop.clientWidth;offsetY=drag[3]+(e.clientY-drag[1])*240/crop.clientHeight;drawCrop();};crop.onpointerup=crop.onpointercancel=()=>drag=null;
-async function refreshAlbum(){try{const entries=await(await fetch('/api/album')).json();albumEntries=entries;const slots=document.getElementById('photoSlot'),previous=slots.value;slots.replaceChildren();
- document.getElementById('photoCount').textContent=msg('Photos')+' · '+entries.length+' / 7';
- if(entries.length<7){let o=document.createElement('option');o.value='add';o.textContent=msg("Add new photo (automatic slot)");slots.append(o);}
- for(const entry of entries){let o=document.createElement('option');o.value=entry.slot;o.textContent=msg("Replace photo ")+(entry.slot+1)+msg(" (occupied)");slots.append(o);}
- if(previous==='add'&&entries.length<7)slots.value='add';
- document.getElementById('uploadPhoto').disabled=!photo||!slots.value;
- const container=document.getElementById('album');container.replaceChildren();for(const entry of entries){let card=document.createElement('div'),img=document.createElement('img'),caption=document.createElement('small'),button=document.createElement('button');img.src=entry.url+'&v='+Date.now();caption.textContent=msg("Photo ")+(entry.slot+1);button.textContent=msg("Delete");button.onclick=async()=>{const r=await fetch('/api/album/delete',{method:'POST',body:new URLSearchParams({slot:entry.slot,token:form.elements.token.value})});if(r.ok)refreshAlbum();};card.append(img,caption,button);container.append(card);}}catch(e){document.getElementById('photoMessage').textContent=msg("Cannot load photos");}}
-async function uploadPhoto(){if(!photo)return;const destination=document.getElementById('photoSlot').value;if(!destination)return;
- if(destination!=='add'&&!confirm(msg("Replace this photo?")))return;let button=document.getElementById('uploadPhoto');button.disabled=true;try{let blob;for(let q=.9;q>=.3;q-=.1){blob=await new Promise(resolve=>crop.toBlob(resolve,'image/jpeg',q));if(blob&&blob.size<=49152)break;}if(!blob||blob.size>49152)throw Error(msg("Photo exceeds 48KB"));let data=new FormData();data.append('file',blob,'photo.jpg');let r=await fetch('/api/album/upload?'+(destination==='add'?'mode=add':'slot='+destination),{method:'POST',headers:{'X-CSRF-Token':form.elements.token.value},body:data});if(!r.ok)throw Error(await r.text());document.getElementById('photoMessage').textContent=msg("Photo saved");refreshAlbum();}catch(e){document.getElementById('photoMessage').textContent=e.message;}finally{button.disabled=!photo||!document.getElementById('photoSlot').value;}}document.getElementById('photoSlot').onchange=()=>document.getElementById('uploadPhoto').disabled=!photo;drawCrop();refreshAlbum();
-
-let wifiNetworks=[],wifiScanning=false,wifiScanned=false,wifiScanMessage='',currentWifi=null;
-function updateWifiLabels(){
- const select=document.getElementById('manageNetworks'),selected=select.value;
- select.replaceChildren(new Option(msg('Choose a network'),''),...wifiNetworks.map(n=>new Option(n.ssid+' · '+n.rssi+' dBm',n.ssid)));
- select.value=selected;document.getElementById('manageScanStatus').textContent=wifiScanMessage?msg(wifiScanMessage):'';
- if(currentWifi)document.getElementById('wifiCurrent').textContent=currentWifi.wifiConnected?msg('Current Wi-Fi')+' · '+currentWifi.wifiSsid:msg('Not connected');
+// Generated by tools/embed_web.py; edit web/management/*.js.
+let firmwareBusy = false;
+let settingsBusy = false;
+const form = document.getElementById("settings");
+for (const [k, v] of Object.entries(config)) {
+  if (form.elements[k]) form.elements[k].value = v;
 }
-function updateCurrentWifi(d){currentWifi=d;updateWifiLabels();}
-async function scanManagementWifi(refresh=false){
- if(wifiScanning||firmwareBusy)return;wifiScanning=true;wifiScanned=true;const button=document.getElementById('manageRescan');button.disabled=true;wifiScanMessage='Scanning…';updateWifiLabels();
- try{const r=await fetch('/api/wifi/scan'+(refresh?'?refresh=1':''),{cache:'no-store'});if(r.status===401){location.replace('/manage');return;}if(!r.ok)throw Error();const d=await r.json();if(d.scanning){setTimeout(()=>scanManagementWifi(),1000);return;}wifiNetworks=d.networks||[];wifiScanMessage=wifiNetworks.length?'':'No networks found';}
- catch(_){wifiScanMessage='Wi-Fi scan failed';}finally{wifiScanning=false;button.disabled=false;updateWifiLabels();}
+if (config.iface) {
+  form.elements.iface.add(new Option(config.iface, config.iface));
+  form.elements.iface.value = config.iface;
 }
-document.getElementById('manageNetworks').onchange=e=>{if(e.target.value){form.elements.ssid.value=e.target.value;dirty();}};
-document.getElementById('manageRescan').onclick=()=>scanManagementWifi(true);
-
-translate();setInterval(tick,3000);
-
-function resetColors(group){const defaults=group==='clock'?{clockColor:'#ffffff',minuteColor:'#ffa500'}:{nasBackground:'#21455c'};for(const [name,value] of Object.entries(defaults))form.elements[name].value=value;dirty();}
-
-function updateInterfaces(d){
- const select=form.elements.iface,selected=select.value;
- const options=[{index:'',name:msg("Automatic")+(d.interface?' · '+d.interface:'')}];
- for(const item of d.interfaces||[])options.push({index:String(item.index),name:item.name+' · '+msg(item.up?"Connected":"Not connected")});
- if(selected&&!options.some(x=>x.index===selected))options.push({index:selected,name:selected});
- const key=JSON.stringify(options);
- if(select.dataset.options!==key){select.replaceChildren(...options.map(x=>new Option(x.name,x.index)));select.value=selected;select.dataset.options=key;}
+let lang = config.adminLanguage || "zh";
+const msg = (key) => I18n.text(key, lang);
+// Group device fields without changing their submitted names.
+const snmpSection = form.elements.nas.closest("section");
+snmpSection.classList.add("snmpSettings");
+const snmpFields = snmpSection.querySelector(".fields");
+let deviceDetails;
+for (const [title, names] of [
+  [
+    "Device information",
+    ["machineName", "nas"],
+  ],
+  ["Display colors", ["nasBackground", "cardBackground"]],
+  ["Connection", ["snmpVersion", "port", "iface", "interval", "community"]],
+  [
+    "Security",
+    [
+      "snmpUser",
+      "snmpAuth",
+      "snmpPassword",
+      "snmpPrivacy",
+      "snmpPrivacyPassword",
+    ],
+  ],
+]) {
+  const group = document.createElement("fieldset");
+  group.className = "snmpGroup";
+  if (title !== "Security") group.classList.add("compactGroup");
+  if (title === "Security") group.dataset.snmp = "3";
+  const heading = document.createElement(title === "Device information" ? "h3" : "h4");
+  heading.dataset.i18n = title;
+  heading.textContent = title;
+  group.append(heading);
+  for (const name of names) {
+    const field = form.elements[name];
+    if (field) {
+      const wrapper =
+        field.closest("#privacyPasswordField") || field.closest("label");
+      if (name === "community") wrapper.classList.add("wideField");
+      group.append(wrapper);
+    }
+  }
+  if (title === "Device information") {
+    deviceDetails = group; group.classList.add("deviceDetails"); snmpFields.append(group);
+  } else {
+    group.classList.add("subGroup"); deviceDetails.append(group);
+  }
 }
+// Keep general display options and clock colors in separate peer cards.
+const desktopFields = form.elements.clockColor.closest(".fields");
+const displayCards = document.createElement("div");
+displayCards.className = "displayCards";
+for (const [title, names] of [
+  ["Display options", ["language", "home", "showSeconds", "brightness", "rotation", "sound"]],
+  ["Clock palettes", ["clockColor", "minuteColor"]],
+]) {
+  const card = document.createElement("div"); card.className = "settings-group";
+  if (title === "Clock palettes") card.classList.add("clockPalette");
+  const heading = document.createElement("h3"); heading.dataset.i18n = title; heading.textContent = msg(title);
+  const fields = document.createElement("div"); fields.className = "fields";
+  for (const name of names) if (form.elements[name]) fields.append(form.elements[name].closest("label"));
+  card.append(heading, fields); displayCards.append(card);
+}
+desktopFields.insertBefore(displayCards, desktopFields.querySelector(".desktop-groups"));
+// Presets only edit the form; saving remains an explicit user action.
+function colorPresets(anchor, headingKey, fields, choices) {
+  const row = document.createElement("div");
+  row.className = "colorPresets";
+  const heading = document.createElement("strong");
+  heading.dataset.i18n = headingKey;
+  heading.textContent = msg(headingKey);
+  const reset = form.elements[fields[0]].closest("label").querySelector("button");
+  if (reset) reset.remove();
+  row.append(heading);
+  for (const [key, colors] of choices) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    const swatch = document.createElement("span");
+    swatch.className = "colorSwatch";
+    swatch.style.background = `linear-gradient(90deg, ${colors[0]} 50%, ${colors[1]} 50%)`;
+    const title = document.createElement("span");
+    title.dataset.i18n = key;
+    title.textContent = msg(key);
+    button.append(swatch, title);
+    button.addEventListener("click", () => {
+      fields.forEach((name, index) => {
+        const input = form.elements[name];
+        input.value = colors[index];
 
-
-function firmwareCRC(bytes){let crc=0xffffffff;for(const b of bytes){crc^=b;for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return ((crc^0xffffffff)>>>0).toString(16).padStart(8,'0');}
-async function upgradeFirmware(){
-  if(firmwareBusy)return;
-  const input=document.getElementById('firmwareFile'),keep=document.getElementById('firmwareKeep'),button=document.getElementById('firmwareUpgrade'),progress=document.getElementById('firmwareProgress'),message=document.getElementById('firmwareMessage'),file=input.files[0];
-  const feedback=(key,color='#147e87')=>{message.dataset.i18n=key;message.textContent=msg(key);message.style.color=color;};
-  if(!file||!file.name.toLowerCase().endsWith('.bin')||file.size<4096||file.size>0x3fa000){feedback("Choose a valid program .bin (up to 1 MiB).",'#b84b42');return;}
-  if(!confirm(keep.checked?msg("Upgrade firmware and keep settings and photos?"):msg("Upgrade firmware and delete all settings and photos?")))return;
-  firmwareBusy=true;input.disabled=keep.disabled=button.disabled=true;progress.value=0;progress.classList.remove('hidden');feedback("Uploading… Do not disconnect power.");
-  try{
-    const bytes=new Uint8Array(await file.arrayBuffer()),body=new FormData();const program=FirmwareBundle.program(bytes);body.append('firmware',new Blob([program]),file.name);
-    if(bytes[0]!==0xe9)throw new Error('invalid');
-    const result=await new Promise((resolve,reject)=>{
-      const request=new XMLHttpRequest();request.open('POST','/api/firmware?'+new URLSearchParams({size:program.length,crc:firmwareCRC(program),keep:keep.checked?'1':'0'}));request.setRequestHeader('X-CSRF-Token',form.elements.token.value);request.timeout=180000;
-      request.upload.onprogress=e=>{if(e.lengthComputable)progress.value=Math.round(e.loaded/e.total*100);};
-      request.upload.onload=()=>{feedback("Checking firmware… Do not disconnect power.");};
-      request.onload=()=>{let d;try{d=JSON.parse(request.responseText);}catch(e){return reject(new Error('write'));}if(request.status===200&&d.updated)resolve(d);else reject(new Error(d.error||'write'));};
-      request.onerror=request.ontimeout=()=>reject(new Error('network'));request.send(body);
+      });
+      dirty(); // One local form update; selecting a palette never sends a save request.
     });
-    progress.value=100;feedback(result.simulated?"Simulation passed. No firmware was flashed.":result.preserved?"Upgrade complete. 1. Wait for restart. 2. Reopen management at the same address.":"Upgrade complete. 1. Wait for restart. 2. Connect to the device hotspot. 3. Set up Wi-Fi again.");
-    if(!result.simulated)return;
-  }catch(error){feedback(error.message==='network'?"Connection interrupted. Check the device before retrying.":['login_required','csrf'].includes(error.message)?"Session expired. Reload and sign in again.":error.message==='size'?"Firmware is too large for the program partition.":"Upgrade failed: invalid, incompatible or incomplete firmware. Data was not cleared.",'#b84b42');}
-  firmwareBusy=false;input.disabled=keep.disabled=button.disabled=false;
+    row.append(button);
+  }
+  const groups = anchor.querySelector(":scope > .desktop-groups");
+  anchor.insertBefore(row, groups || null);
+}
+colorPresets(form.elements.minuteColor.closest(".fields"), "Clock palettes", ["clockColor", "minuteColor"], [
+  ["Default palette", ["#ffffff", "#ffa500"]],
+  ["White & blue", ["#ffffff", "#58baff"]],
+  ["Cyan & white", ["#42d9ed", "#ffffff"]],
+  ["Green & gold", ["#92ed56", "#ffcb55"]],
+  ["White & pink", ["#ffffff", "#ff80b5"]],
+  ["Gold & white", ["#ffcb55", "#ffffff"]],
+  ["Violet & cyan", ["#c5a3ff", "#42d9ed"]],
+  ["Lime & white", ["#bbef66", "#ffffff"]],
+  ["White & coral", ["#ffffff", "#ff927c"]],
+]);
+colorPresets(form.elements.cardBackground.closest("fieldset"), "Device palettes", ["nasBackground", "cardBackground"], [
+  ["Default palette", ["#21455c", "#103040"]],
+  ["Ocean", ["#68acc4", "#32738a"]],
+  ["Forest", ["#74b08a", "#3c7b5e"]],
+  ["Amber", ["#d6b24c", "#856737"]],
+  ["Violet", ["#a58bc9", "#69477d"]],
+  ["Rose", ["#d781a2", "#854761"]],
+]);
+let editedMachine = config.selectedMachine ?? config.activeMachine ?? 0;
+const machineSelect = document.getElementById("machineSelect");
+(config.machines || [{ name: config.nas }]).forEach((m, i) =>
+  machineSelect.add(new Option(m.name || m.address || config.nas, i)),
+);
+machineSelect.value = editedMachine;
+machineSelect.classList.add("hidden");
+machineSelect.setAttribute("aria-label", msg("Device list"));
+const machineList = document.createElement("div");
+machineList.className = "machineList";
+machineSelect
+  .closest("section")
+  .insertBefore(machineList, machineSelect.closest(".actions"));
+(config.machines || []).forEach((m, i) => {
+  const row = document.createElement("div");
+  row.className = "machineItem" + (i == editedMachine ? " active" : "");
+  const choose = document.createElement("button");
+  choose.type = "button";
+  choose.className = "choose";
+  choose.textContent = i + 1 + ". " + (m.name || m.address || "SNMP");
+  const address = document.createElement("small");
+  address.textContent = m.address || "";
+  choose.append(address);
+  choose.onclick = () => {
+    if (i != editedMachine) machineAction("select", i);
+  };
+  row.append(choose);
+  for (const [label, offset, key] of [
+    ["↑", -1, "Move up"],
+    ["↓", 1, "Move down"],
+  ]) {
+    const move = document.createElement("button");
+    move.type = "button";
+    move.className = "move";
+    move.textContent = label;
+    move.dataset.i18nTitle = key;
+    move.title = msg(key);
+    move.setAttribute("aria-label", msg(key));
+    move.disabled = i + offset < 0 || i + offset >= config.machines.length;
+    move.onclick = () => machineAction("move", i + ":" + (i + offset));
+    row.append(move);
+  }
+  machineList.append(row);
+});
+form.elements.machineIndex.value = editedMachine;
+document.getElementById("addMachine").disabled =
+  (config.machines || []).length >= 6;
+document.getElementById("deleteMachine").disabled =
+  (config.machines || []).length <= 1;
+let machineBusy = false;
+async function machineAction(action, index) {
+  if (machineBusy) return;
+  if (
+    (action === "select" ? snmpSection.classList.contains("dirty") : [...form.querySelectorAll("section.dirty")].length) &&
+    !confirm(msg("Discard unsaved changes?"))
+  ) {
+    machineSelect.value = editedMachine;
+    form.elements.machineIndex.value = editedMachine;
+    return;
+  }
+  if (action === "delete" && !confirm(msg("Delete this device?"))) return;
+  machineBusy = true;
+  try {
+    const response = await post("/api/machine", { action, index: index ?? "" });
+    if (response.ok) {
+      const result = await response.json();
+      if (action === "select") {
+        editedMachine = result.selectedMachine;
+        Object.assign(config, result);
+        for (const name of ["machineName", "nas", "nasBackground", "cardBackground", "snmpVersion", "port", "iface", "interval", "snmpUser", "snmpAuth", "snmpPrivacy"]) {
+          const field = form.elements[name];
+          if (name === "iface") field.replaceChildren(new Option(msg("Automatic"), ""), ...(result.iface ? [new Option(result.iface, result.iface)] : []));
+          field.value = result[name] ?? "";
+          originals.set(field, field.value);
+        }
+        for (const name of ["community", "snmpPassword", "snmpPrivacyPassword"]) {
+          form.elements[name].value = "";
+          originals.set(form.elements[name], "");
+        }
+        form.elements.machineIndex.value = editedMachine;
+        machineSelect.value = editedMachine;
+        [...machineList.children].forEach((row, i) => row.classList.toggle("active", i === editedMachine));
+        snmpOptions(); dirty();
+        history.replaceState(null, "", "/manage?device=" + editedMachine + "#settings");
+        return;
+      }
+      location.href = "/manage?device=" + (result.selectedMachine ?? result.activeMachine) + "#settings";
+    } else
+      document.getElementById("message").textContent = msg(
+        (await response.text()).trim() || "Failed",
+      );
+  } catch (_) {
+    document.getElementById("message").textContent = msg("Failed");
+  } finally {
+    machineBusy = false;
+  }
+}
+machineSelect.onchange = () => machineAction("select", machineSelect.value);
+document.getElementById("addMachine").onclick = () => machineAction("add");
+document.getElementById("deleteMachine").onclick = () =>
+  machineAction("delete", editedMachine);
+function translate() {
+  document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+  document.getElementById("language").value = lang;
+  I18n.apply(document, lang);
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    el.title = msg(el.dataset.i18nTitle);
+    el.setAttribute("aria-label", el.title);
+  });
+  machineSelect.setAttribute("aria-label", msg("Device list"));
+  updateWifiLabels();
+  updateSaveAction();
+  document.getElementById("cityCodeLookup").title = msg(
+    "Search for a city on China Weather. The nine digits in its weather page URL are the city code.",
+  );
+  document
+    .getElementById("crop")
+    .setAttribute("aria-label", msg("Photo crop preview"));
+  if (typeof albumEntries !== "undefined") updateAlbumLabels();
+  tick();
+}
+document.getElementById("language").onchange = async (e) => {
+  if (settingsBusy) { e.target.value = lang; return; }
+  settingsBusy = true;
+  const previous = lang;
+  lang = e.target.value;
+  translate();
+  try {
+    const r = await post("/api/language", { language: lang });
+    if (!r.ok) throw new Error("save");
+    config.adminLanguage = lang;
+  } catch (error) {
+    lang = previous;
+    translate();
+  } finally { settingsBusy = false; }
+};
+document.querySelectorAll(".day").forEach((c) => {
+  c.checked = !!((config.alarmDays ?? 31) & +c.value);
+  c.onchange = () => {
+    form.elements.alarmDays.value = [
+      ...document.querySelectorAll(".day:checked"),
+    ].reduce((n, c) => n | +c.value, 0);
+  };
+});
+const originals = new Map(
+  [...form.querySelectorAll("input,select")].map((el) => [
+    el,
+    el.type === "checkbox" ? el.checked : el.value,
+  ]),
+);
+function updateSaveAction() {
+  const key = "Save & restart";
+  const label = document.getElementById("saveActionLabel");
+  label.dataset.i18n = key;
+  label.textContent = msg(key);
+}
+function dirty() {
+  updateSaveAction();
+  for (const card of form.querySelectorAll("section"))
+    card.classList.toggle(
+      "dirty",
+      [
+        ...card.querySelectorAll(
+          "input[name]:not([type=hidden]),select[name],input.day",
+        ),
+      ].some(
+        (el) =>
+          (el.type === "checkbox" ? el.checked : el.value) !==
+          originals.get(el),
+      ),
+    );
+}
+form.addEventListener("input", dirty);
+form.addEventListener("change", dirty);
+form.onsubmit = async (e) => {
+  e.preventDefault();
+  if (settingsBusy) return;
+  const message = document.getElementById("message"),
+    button = document.querySelector("#settingsActions button");
+  if (!+form.elements.alarmDays.value) {
+    message.textContent = msg("Select at least one weekday");
+    return;
+  }
+  button.disabled = true;
+  settingsBusy = true;
+  let validatingCity = true;
+  message.textContent = msg("Checking city code…");
+  try {
+    const cityCode = form.elements.cityCode.value.trim();
+    form.elements.cityCode.value = cityCode;
+    const deadline = Date.now() + 12000;
+    let status = "pending";
+    while (Date.now() < deadline) {
+      const checkAbort = new AbortController();
+      const checkTimer = setTimeout(() => checkAbort.abort(), 4000);
+      const checked = await fetch("/api/weather/check", {
+        signal: checkAbort.signal,
+        method: "POST", body: new URLSearchParams({code:cityCode,token:form.elements.token.value}),
+      }).finally(() => clearTimeout(checkTimer));
+      if (checked.status === 401 || checked.status === 403) throw new Error(msg("Reload page"));
+      const result = await checked.json(); status = result.status;
+      if (status !== "pending" && status !== "busy") break;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    if (status !== "valid") {
+      message.textContent = status === "forecast" ? msg("This city provides forecasts only; live weather is unavailable.") :
+        status === "invalid" ? msg("City code not found or unsupported.") : msg("Weather service unavailable. Try again.");
+      message.style.color = "#b84b42"; button.disabled = false; return;
+    }
+    validatingCity = false;
+    message.textContent = msg("Saving…");
+    const response = await fetch(form.action, {
+      method: "POST",
+      signal: AbortSignal.timeout(12000),
+      body: new URLSearchParams(new FormData(form)),
+    });
+    const content = await response.text();
+    message.textContent = (response.headers.get("Content-Type") || "").includes(
+      "text/html",
+    )
+      ? response.ok
+        ? msg("Saved.")
+        : msg("Failed")
+      : msg(content);
+    message.style.color = response.ok ? "#147e87" : "#b84b42";
+    if (response.ok) {
+      for (const name of ["pass", "admin", "community", "snmpPassword", "snmpPrivacyPassword"])
+        form.elements[name].value = "";
+      // A successful settings save always restarts the device; do not submit
+      // another restart request or allow a second save during the boot window.
+      setTimeout(() => { location.href = "/manage"; }, 8000);
+    } else button.disabled = false;
+  } catch (error) {
+    message.textContent = validatingCity ? msg("Weather service unavailable. Try again.") : msg("Failed");
+    message.style.color = "#b84b42";
+    button.disabled = false;
+  } finally { settingsBusy = false; }
+};
+document.querySelectorAll("[data-tab]").forEach(
+  (b) =>
+    (b.onclick = () => {
+      document
+        .querySelectorAll("[data-tab]")
+        .forEach((x) => x.classList.toggle("active", x === b));
+      ["screen", "photos", "maintenance"].forEach((n) =>
+        document
+          .getElementById("tab-" + n)
+          .classList.toggle("hidden", b.dataset.tab !== n),
+      );
+      form.classList.toggle("hidden", b.dataset.tab !== "settings");
+      document
+        .getElementById("settingsActions")
+        .classList.toggle("hidden", b.dataset.tab !== "settings");
+      if (b.dataset.tab === "settings") loadWeatherCities();
+      if (b.dataset.tab === "photos" && !albumLoaded) refreshAlbum();
+    }),
+);
+const format = (v, u) => (v < 0 || v == null ? "--" : v.toFixed(1) + u);
+const rate = (v) =>
+  v < 0
+    ? "--"
+    : v >= 1048576
+      ? (v / 1048576).toFixed(1) + " MB/s"
+      : (v / 1024).toFixed(1) + " KB/s";
+function weatherOptions() {
+  const enabled = form.elements.weatherEnabled.value === "1";
+  form.elements.home.querySelector('option[value="5"]').disabled = !enabled;
+  document.getElementById("weatherPage").disabled = !enabled;
+  if (!enabled && form.elements.home.value === "5")
+    form.elements.home.value = "6";
+}
+form.elements.weatherEnabled.onchange = weatherOptions;
+weatherOptions();
+let statusBusy = false;
+async function tick() {
+  if (firmwareBusy || settingsBusy || statusBusy || document.hidden) return;
+  statusBusy = true;
+  try {
+    const response = await fetch("/api/status?management=1", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(6000),
+    });
+    if (response.status === 401) {
+      location.href = "/manage";
+      return;
+    }
+    const d = await response.json();
+    updateInterfaces(d);
+    updateCurrentWifi(d);
+    document.getElementById("state").textContent = d.online
+      ? msg("Online")
+      : msg("Offline");
+    for (const k of ["cpu", "memory"])
+      document.getElementById(k).textContent = format(d[k], "%");
+    document.getElementById("temperature").textContent = format(
+      d.temperature,
+      "°C",
+    );
+    document.getElementById("traffic").textContent =
+      rate(d.rx) + " / " + rate(d.tx);
+    document.getElementById("traffic").style.fontSize = "15px";
+    document.getElementById("details").textContent =
+      (d.model || "SNMP") +
+      " · " +
+      (d.interface || "--") +
+      " · " +
+      (d.disks || []).length +
+      msg(" disks / ") +
+      (d.volumes || []).length +
+      msg(" volumes");
+    const w = d.weather;
+    document.getElementById("weatherDetails").textContent =
+      w && w.valid
+        ? (lang === "en"
+            ? (w.cityEnglish || "Tianjin") + " · " + (w.conditionEnglish || "")
+            : (w.city || "") + " · " + (w.condition || "")) +
+          " · " +
+          w.temperature +
+          "°C · " +
+          w.humidity +
+          "%"
+        : msg("Waiting for weather");
+    const a = d.alarm;
+    if (a)
+      document.getElementById("alarmDetails").textContent =
+        [msg("Idle"), msg("Ringing"), msg("Snoozed"), msg("Dismissed today")][
+          a.state
+        ] + (a.state === 2 ? " · " + a.remaining + "s" : "");
+  } catch (e) {
+    document.getElementById("state").textContent = msg("Disconnected");
+  } finally {
+    statusBusy = false;
+  }
+}
+async function post(path, data = {}) {
+  return fetch(path, {
+    signal: AbortSignal.timeout(12000),
+    method: "POST",
+    body: new URLSearchParams({ ...data, token: form.elements.token.value }),
+  });
+}
+async function setPage(page) {
+  await post("/api/page", { page });
+  tick();
+}
+async function testBeep() {
+  const r = await post("/api/beep");
+  document.getElementById("message").textContent = r.ok
+    ? msg("Sound sent")
+    : msg("Failed");
+}
+async function alarmAction(a) {
+  const r = await post("/api/alarm/" + a, {
+    tune: form.elements.alarmTune.value,
+  });
+  if (!r.ok)
+    document.getElementById("alarmDetails").textContent =
+      msg("No active alarm");
+  else tick();
+}
+async function resetSettings() {
+  const r = await post("/api/reset/request");
+  if (!r.ok) return;
+  const d = await r.json();
+  if (!confirm(msg("Clear all settings and photos? This cannot be undone.")))
+    return;
+  const done = await post("/api/reset/confirm", { nonce: d.nonce });
+  if (done.ok) {
+    alert(msg("Reset complete. Reconnect to the device Wi-Fi."));
+    location.reload();
+  }
 }
 
-function snmpOptions(){const v=form.elements.snmpVersion.value;document.querySelectorAll('[data-snmp]').forEach(e=>e.classList.toggle('hidden',e.dataset.snmp!==v));form.elements.snmpUser.required=v==='3';form.elements.snmpPassword.minLength=v==='3'?8:0;const encrypted=v==='3'&&form.elements.snmpPrivacy.value!=='none';document.getElementById('privacyPasswordField').classList.toggle('hidden',!encrypted);form.elements.snmpPrivacyPassword.minLength=encrypted?8:0;}
-form.elements.snmpPrivacy.addEventListener('change',snmpOptions);form.elements.snmpVersion.addEventListener('change',snmpOptions);snmpOptions();
+const crop = document.getElementById("crop"),
+  cropCtx = crop.getContext("2d");
+let photo = null,
+  angle = 0,
+  zoom = 1,
+  offsetX = 0,
+  offsetY = 0,
+  drag = null;
+let albumEntries = [];
+function drawCrop() {
+  cropCtx.fillStyle = "#0b1421";
+  cropCtx.fillRect(0, 0, 240, 240);
+  if (!photo) return;
+  let w = angle % 180 ? photo.height : photo.width,
+    h = angle % 180 ? photo.width : photo.height,
+    scale = Math.max(240 / w, 240 / h) * zoom;
+  offsetX = Math.max(
+    -(w * scale - 240) / 2,
+    Math.min((w * scale - 240) / 2, offsetX),
+  );
+  offsetY = Math.max(
+    -(h * scale - 240) / 2,
+    Math.min((h * scale - 240) / 2, offsetY),
+  );
+  cropCtx.save();
+  cropCtx.translate(120 + offsetX, 120 + offsetY);
+  cropCtx.rotate((angle * Math.PI) / 180);
+  cropCtx.scale(scale, scale);
+  cropCtx.drawImage(photo, -photo.width / 2, -photo.height / 2);
+  cropCtx.restore();
+}
+function resetCrop() {
+  zoom = 1;
+  offsetX = offsetY = 0;
+  document.getElementById("zoom").value = 1;
+  drawCrop();
+}
+function rotatePhoto() {
+  angle = (angle + 90) % 360;
+  resetCrop();
+}
+document.getElementById("zoom").oninput = (e) => {
+  zoom = +e.target.value;
+  drawCrop();
+};
+document.getElementById("photoFile").onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file),
+    img = new Image();
+  img.onload = () => {
+    photo = img;
+    angle = 0;
+    resetCrop();
+    URL.revokeObjectURL(url);
+    document.getElementById("uploadPhoto").disabled =
+      !document.getElementById("photoSlot").value;
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    document.getElementById("photoMessage").textContent =
+      msg("Cannot open photo");
+  };
+  img.src = url;
+};
+crop.onpointerdown = (e) => {
+  if (!photo) return;
+  drag = [e.clientX, e.clientY, offsetX, offsetY];
+  crop.setPointerCapture(e.pointerId);
+};
+crop.onpointermove = (e) => {
+  if (!drag) return;
+  offsetX = drag[2] + ((e.clientX - drag[0]) * 240) / crop.clientWidth;
+  offsetY = drag[3] + ((e.clientY - drag[1]) * 240) / crop.clientHeight;
+  drawCrop();
+};
+crop.onpointerup = crop.onpointercancel = () => (drag = null);
+let albumRefreshBusy = false, albumLoaded = false;
+function updateAlbumLabels() {
+  document.getElementById("photoCount").textContent = msg("Photos") + " · " + albumEntries.length + " / 7";
+  document.querySelectorAll("#album small[data-slot]").forEach(el => {
+    el.textContent = msg("Photo ") + (Number(el.dataset.slot) + 1);
+  });
+  for (const option of document.getElementById("photoSlot").options) {
+    option.textContent = option.value === "add" ? msg("Add new photo (automatic slot)") :
+      msg("Replace photo ") + (Number(option.value) + 1) + msg(" (occupied)");
+  }
+}
+async function refreshAlbum() {
+  if (albumRefreshBusy) return;
+  albumRefreshBusy = true;
+  try {
+    const entries = await (await fetch("/api/album")).json();
+    albumEntries = entries;
+    const slots = document.getElementById("photoSlot"),
+      previous = slots.value;
+    slots.replaceChildren();
+    document.getElementById("photoCount").textContent =
+      msg("Photos") + " · " + entries.length + " / 7";
+    if (entries.length < 7) {
+      let o = document.createElement("option");
+      o.value = "add";
+      o.textContent = msg("Add new photo (automatic slot)");
+      slots.append(o);
+    }
+    for (const entry of entries) {
+      let o = document.createElement("option");
+      o.value = entry.slot;
+      o.textContent =
+        msg("Replace photo ") + (entry.slot + 1) + msg(" (occupied)");
+      slots.append(o);
+    }
+    if (previous === "add" && entries.length < 7) slots.value = "add";
+    document.getElementById("uploadPhoto").disabled = !photo || !slots.value;
+    const container = document.getElementById("album");
+    container.replaceChildren();
+    for (const entry of entries) {
+      let card = document.createElement("div"),
+        img = document.createElement("img"),
+        caption = document.createElement("small"),
+        button = document.createElement("button");
+      img.decoding = "async";
+      caption.dataset.slot = entry.slot;
+      caption.textContent = msg("Photo ") + (entry.slot + 1);
+      button.textContent = msg("Delete");
+      button.dataset.i18n = "Delete";
+      button.onclick = async () => {
+        const r = await fetch("/api/album/delete", {
+          method: "POST",
+          body: new URLSearchParams({
+            slot: entry.slot,
+            token: form.elements.token.value,
+          }),
+        });
+        if (r.ok) refreshAlbum();
+      };
+      card.append(img, caption, button);
+      container.append(card);
+      // Only load the visible album, one image at a time. ESP8266 cannot afford
+      // a browser's six parallel TCP image downloads alongside settings saves.
+      await new Promise(resolve => {
+        img.onload = img.onerror = resolve;
+        img.src = entry.url + "&v=" + Date.now();
+      });
+    }
+    albumLoaded = true;
+  } catch (e) {
+    document.getElementById("photoMessage").textContent =
+      msg("Cannot load photos");
+  } finally {
+    albumRefreshBusy = false;
+  }
+}
+async function uploadPhoto() {
+  if (!photo) return;
+  const destination = document.getElementById("photoSlot").value;
+  if (!destination) return;
+  if (destination !== "add" && !confirm(msg("Replace this photo?"))) return;
+  let button = document.getElementById("uploadPhoto");
+  button.disabled = true;
+  try {
+    let blob;
+    for (let q = 0.9; q >= 0.3; q -= 0.1) {
+      blob = await new Promise((resolve) =>
+        crop.toBlob(resolve, "image/jpeg", q),
+      );
+      if (blob && blob.size <= 49152) break;
+    }
+    if (!blob || blob.size > 49152) throw Error(msg("Photo exceeds 48KB"));
+    let data = new FormData();
+    data.append("file", blob, "photo.jpg");
+    let r = await fetch(
+      "/api/album/upload?" +
+        (destination === "add" ? "mode=add" : "slot=" + destination),
+      {
+        method: "POST",
+        headers: { "X-CSRF-Token": form.elements.token.value },
+        body: data,
+      },
+    );
+    if (!r.ok) throw Error(await r.text());
+    document.getElementById("photoMessage").textContent = msg("Photo saved");
+    refreshAlbum();
+  } catch (e) {
+    document.getElementById("photoMessage").textContent = e.message;
+  } finally {
+    button.disabled = !photo || !document.getElementById("photoSlot").value;
+  }
+}
+document.getElementById("photoSlot").onchange = () =>
+  (document.getElementById("uploadPhoto").disabled = !photo);
+drawCrop();
 
-async function signOut(event){event.preventDefault();try{const response=await post('/logout');if(response.ok||response.status===401)location.replace('/manage');else throw Error();}catch(_){document.getElementById('message').textContent=msg('Failed');}}
+
+let wifiNetworks = [],
+  wifiScanning = false,
+  wifiScanned = false,
+  wifiScanMessage = "",
+  currentWifi = null;
+function updateWifiLabels() {
+  const select = document.getElementById("manageNetworks"),
+    selected = select.value;
+  select.replaceChildren(
+    new Option(msg("Choose a network"), ""),
+    ...wifiNetworks.map(
+      (n) => new Option(n.ssid + " · " + n.rssi + " dBm", n.ssid),
+    ),
+  );
+  select.value = selected;
+  document.getElementById("manageScanStatus").textContent = wifiScanMessage
+    ? msg(wifiScanMessage)
+    : "";
+  if (currentWifi)
+    document.getElementById("wifiCurrent").textContent =
+      currentWifi.wifiConnected
+        ? msg("Current Wi-Fi") + " · " + currentWifi.wifiSsid
+        : msg("Not connected");
+}
+function updateCurrentWifi(d) {
+  currentWifi = d;
+  updateWifiLabels();
+}
+async function scanManagementWifi(refresh = false) {
+  if (wifiScanning || firmwareBusy) return;
+  wifiScanning = true;
+  wifiScanned = true;
+  const button = document.getElementById("manageRescan");
+  button.disabled = true;
+  wifiScanMessage = "Scanning…";
+  updateWifiLabels();
+  try {
+    const r = await fetch("/api/wifi/scan" + (refresh ? "?refresh=1" : ""), {
+      cache: "no-store",
+    });
+    if (r.status === 401) {
+      location.replace("/manage");
+      return;
+    }
+    if (!r.ok) throw Error();
+    const d = await r.json();
+    if (d.scanning) {
+      setTimeout(() => scanManagementWifi(), 1000);
+      return;
+    }
+    wifiNetworks = d.networks || [];
+    wifiScanMessage = wifiNetworks.length ? "" : "No networks found";
+  } catch (_) {
+    wifiScanMessage = "Wi-Fi scan failed";
+  } finally {
+    wifiScanning = false;
+    button.disabled = false;
+    updateWifiLabels();
+  }
+}
+document.getElementById("manageNetworks").onchange = (e) => {
+  if (e.target.value) {
+    form.elements.ssid.value = e.target.value;
+    dirty();
+  }
+};
+// Discover only when the network selector is used; opening unrelated settings
+// must not start an SDK scan during a configuration save or page transfer.
+document.getElementById("manageNetworks").onfocus = () => {
+  if (!wifiScanned) scanManagementWifi();
+};
+document.getElementById("manageRescan").onclick = () =>
+  scanManagementWifi(true);
+
+translate();
+setInterval(tick, 3000);
+
+function resetColors(group) {
+  const defaults =
+    group === "clock"
+      ? { clockColor: "#ffffff", minuteColor: "#ffa500" }
+      : { nasBackground: "#21455c" };
+  for (const [name, value] of Object.entries(defaults))
+    form.elements[name].value = value;
+  dirty();
+}
+
+function updateInterfaces(d) {
+  if (editedMachine !== config.activeMachine) d = {}; // Do not offer another device's ports.
+  const select = form.elements.iface,
+    selected = select.value;
+  const options = [
+    {
+      index: "",
+      name: msg("Automatic") + (d.interface ? " · " + d.interface : ""),
+    },
+  ];
+  for (const item of d.interfaces || [])
+    options.push({
+      index: String(item.index),
+      name: item.name + " · " + msg(item.up ? "Connected" : "Not connected"),
+    });
+  if (selected && !options.some((x) => x.index === selected))
+    options.push({ index: selected, name: selected });
+  const key = JSON.stringify(options);
+  if (select.dataset.options !== key) {
+    select.replaceChildren(...options.map((x) => new Option(x.name, x.index)));
+    select.value = selected;
+    select.dataset.options = key;
+  }
+}
+
+
+async function upgradeFirmware() {
+  if (firmwareBusy) return;
+  const input = document.getElementById("firmwareFile"),
+    keep = document.getElementById("firmwareKeep"),
+    button = document.getElementById("firmwareUpgrade"),
+    progress = document.getElementById("firmwareProgress"),
+    message = document.getElementById("firmwareMessage"),
+    file = input.files[0];
+  const feedback = (key, color = "#147e87") => {
+    message.dataset.i18n = key;
+    message.textContent = msg(key);
+    message.style.color = color;
+  };
+  if (
+    !file ||
+    !file.name.toLowerCase().endsWith(".bin") ||
+    file.size < 4096 ||
+    file.size > 0x3fa000
+  ) {
+    feedback("Choose a valid program .bin (up to 1 MiB).", "#b84b42");
+    return;
+  }
+  if (
+    !confirm(
+      keep.checked
+        ? msg("Upgrade firmware and keep settings and photos?")
+        : msg("Upgrade firmware and delete all settings and photos?"),
+    )
+  )
+    return;
+  firmwareBusy = true;
+  input.disabled = keep.disabled = button.disabled = true;
+  progress.value = 0;
+  progress.classList.remove("hidden");
+  feedback("Uploading… Do not disconnect power.");
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer()),
+      body = new FormData();
+    const program = FirmwareBundle.program(bytes);
+    body.append("firmware", new Blob([program]), file.name);
+    if (bytes[0] !== 0xe9) throw new Error("invalid");
+    const result = await new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open(
+        "POST",
+        "/api/firmware?" +
+          new URLSearchParams({
+            size: program.length,
+            crc: firmwareCRC(program),
+            keep: keep.checked ? "1" : "0",
+          }),
+      );
+      request.setRequestHeader("X-CSRF-Token", form.elements.token.value);
+      request.timeout = 180000;
+      request.upload.onprogress = (e) => {
+        if (e.lengthComputable)
+          progress.value = Math.round((e.loaded / e.total) * 100);
+      };
+      request.upload.onload = () => {
+        feedback("Checking firmware… Do not disconnect power.");
+      };
+      request.onload = () => {
+        let d;
+        try {
+          d = JSON.parse(request.responseText);
+        } catch (e) {
+          return reject(new Error("write"));
+        }
+        if (request.status === 200 && d.updated) resolve(d);
+        else reject(new Error(d.error || "write"));
+      };
+      request.onerror = request.ontimeout = () => reject(new Error("network"));
+      request.send(body);
+    });
+    progress.value = 100;
+    feedback(
+      result.simulated
+        ? "Simulation passed. No firmware was flashed."
+        : result.preserved
+          ? "Upgrade complete. 1. Wait for restart. 2. Reopen management at the same address."
+          : "Upgrade complete. 1. Wait for restart. 2. Connect to the device hotspot. 3. Set up Wi-Fi again.",
+    );
+    if (!result.simulated) return;
+  } catch (error) {
+    feedback(
+      error.message === "network"
+        ? "Connection interrupted. Check the device before retrying."
+        : ["login_required", "csrf"].includes(error.message)
+          ? "Session expired. Reload and sign in again."
+          : error.message === "size"
+            ? "Firmware is too large for the program partition."
+            : "Upgrade failed: invalid, incompatible or incomplete firmware. Data was not cleared.",
+      "#b84b42",
+    );
+  }
+  firmwareBusy = false;
+  input.disabled = keep.disabled = button.disabled = false;
+}
+
+function snmpOptions() {
+  const v = form.elements.snmpVersion.value;
+  document
+    .querySelectorAll("[data-snmp]")
+    .forEach((e) => e.classList.toggle("hidden", e.dataset.snmp !== v));
+  form.elements.snmpUser.required = v === "3";
+  form.elements.snmpPassword.minLength = v === "3" ? 8 : 0;
+  const encrypted = v === "3" && form.elements.snmpPrivacy.value !== "none";
+  document
+    .getElementById("privacyPasswordField")
+    .classList.toggle("hidden", !encrypted);
+  form.elements.snmpPrivacyPassword.minLength = encrypted ? 8 : 0;
+}
+form.elements.snmpPrivacy.addEventListener("change", snmpOptions);
+form.elements.snmpVersion.addEventListener("change", snmpOptions);
+snmpOptions();
+
+async function signOut(event) {
+  event.preventDefault();
+  try {
+    const response = await post("/logout");
+    if (response.ok || response.status === 401) location.replace("/manage");
+    else throw Error();
+  } catch (_) {
+    document.getElementById("message").textContent = msg("Failed");
+  }
+}
+
+if (location.hash === "#settings")
+  document.querySelector('[data-tab="settings"]').click();
+
+document.getElementById("rediscoverStorage").onclick = async (e) => {
+  const button = e.currentTarget,
+    feedback = document.getElementById("storageFeedback");
+  button.disabled = true;
+  try {
+    const r = await post("/api/storage/rediscover", {});
+    feedback.dataset.i18n = r.ok
+      ? "Storage discovery queued"
+      : "Discovery already requested";
+    feedback.textContent = msg(feedback.dataset.i18n);
+  } catch (error) {
+    feedback.dataset.i18n = "Failed";
+    feedback.textContent = msg("Failed");
+  }
+  setTimeout(() => (button.disabled = false), 60000);
+};
+
+// Monitoring selection is explicit and independent of the configuration editor.
+document.getElementById("switchMonitor").onclick = async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const response = await post("/api/machine", {action: "activate"});
+    if (!response.ok) throw new Error("Switch failed");
+    const result = await response.json();
+    config.activeMachine = result.activeMachine;
+    await tick();
+  } catch (_) { document.getElementById("storageFeedback").textContent = msg("Failed"); }
+  finally { button.disabled = false; }
+};
+
+// The city catalog loads only when settings are opened; selected codes remain editable.
+var weatherCitiesLoading = false;
+function loadWeatherCities() {
+  if (weatherCitiesLoading) return;
+  weatherCitiesLoading = true;
+  const script = document.createElement("script");
+  script.src = "/weather-cities.js?v=china-city-20261011";
+  script.onload = () => {
+    const province = document.getElementById("weatherProvince"), city = document.getElementById("weatherCity");
+    const rows = window.weatherCities;
+    province.replaceChildren(new Option("—", ""));
+    for (const name of new Set(rows.map(r => r[0]))) province.add(new Option(name, name));
+    function cities(code) {
+      city.replaceChildren(new Option("—", ""));
+      for (const row of rows.filter(r => r[0] === province.value)) city.add(new Option(row[1], row[2]));
+      city.value = code || "";
+    }
+    const current = rows.find(r => r[2] === form.elements.cityCode.value);
+    if (current) province.value = current[0];
+    cities(current && current[2]);
+    province.disabled = city.disabled = false;
+    province.onchange = () => cities();
+    city.onchange = () => { if (city.value) { form.elements.cityCode.value = city.value; form.elements.cityCode.dispatchEvent(new Event("input", {bubbles:true})); } };
+    form.elements.cityCode.addEventListener("input", () => {
+      const row = rows.find(r => r[2] === form.elements.cityCode.value);
+      province.value = row ? row[0] : ""; cities(row && row[2]);
+    });
+  };
+  script.onerror = () => { weatherCitiesLoading = false; document.getElementById("state").textContent = msg("Failed"); };
+  document.body.append(script);
+}

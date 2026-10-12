@@ -64,7 +64,9 @@ def query(host, port, community, name, next_oid=False, timeout=2):
     if tag != 48:
         raise ValueError('invalid response')
     _, version, pos = read(body)
-    _, _, pos = read(body, pos)
+    community_tag, response_community, pos = read(body, pos)
+    if community_tag != 4 or response_community != community.encode():
+        raise ValueError("SNMP community mismatch")
     tag, pdu, _ = read(body, pos)
     if tag != 0xa2 or int.from_bytes(version, 'big') != 1:
         raise ValueError('not SNMP v2c response')
@@ -77,9 +79,12 @@ def query(host, port, community, name, next_oid=False, timeout=2):
     _, binding, _ = read(bindings)
     _, object_id, pos = read(binding)
     tag, value, _ = read(binding, pos)
-    if tag >= 0x80:
-        raise ValueError('OID unavailable')
-    return oid_text(object_id), value.decode('utf8',errors='replace') if tag == 4 else int.from_bytes(value,'big')
+    if tag in (0x80,0x81,0x82):
+        from snmp_errors import UnsupportedOid
+        raise UnsupportedOid('OID unavailable')
+    if tag not in (2,4,6,0x41,0x42,0x43,0x46):
+        raise ValueError('Invalid SNMP value type')
+    return oid_text(object_id), value.decode('utf8',errors='replace') if tag == 4 else oid_text(value) if tag == 6 else int.from_bytes(value,'big')
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)

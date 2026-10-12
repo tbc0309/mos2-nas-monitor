@@ -1,5 +1,6 @@
 #pragma once
 #include "snmp.h"
+#include "snmp/interface_policy.h"
 // Independent discovery, requested at boot/periodically and by management.
 class NetworkInterfaces {
   Snmp::Client client;
@@ -11,6 +12,7 @@ class NetworkInterfaces {
   const String root = "1.3.6.1.2.1.2.2.1.2";
 
 public:
+  uint32_t requestsSent() const {return client.sent;}
   struct Entry {
     String index, name;
     bool up = false;
@@ -21,7 +23,13 @@ public:
     requested = running = paused = false;
     completed = 0;
     count = 0; bootstrap = true;
+    workingCount = steps = stage = 0;
+    retryWait = Sampling::InterfacePeriod; failed = false;
+    walk = candidate = "";
+    for (auto &e : entries) e = Entry();
+    for (auto &e : working) e = Entry();
   }
+  void suspend() { client.cancel(); running = false; }
   void request() {
     requested = true;
   }
@@ -59,6 +67,12 @@ public:
           completed = millis();
           retryWait = failed ? (count ? Sampling::RetryCeiling : Sampling::DiscoveryRetry) : Sampling::InterfacePeriod;
           if (failed) requested = true;
+          else {
+            // Preserve paused scans, but release completed discovery copies.
+            for (unsigned i = count; i < 16; ++i) entries[i] = Entry();
+            for (auto &entry : working) entry = Entry();
+            workingCount = 0; walk = String(); candidate = String();
+          }
           return;
         }
         walk = value.oid;
@@ -67,8 +81,7 @@ public:
         working[workingCount].name = value.text;
         stage = 1;
       } else if (stage == 1) {
-        // Ethernet includes physical ports, bonds and bridges, but excludes loopback/tunnels.
-        stage = result == 1 && value.num == 6 ? 2 : 0;
+        stage = result == 1 && !value.negative && InterfacePolicy::selectable(value.num) ? 2 : 0;
       } else {
         working[workingCount].up = result == 1 && value.num == 1;
         if (result != 1) {

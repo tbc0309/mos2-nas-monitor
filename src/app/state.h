@@ -1,28 +1,26 @@
 #pragma once
+#include "activity_policy.h"
+Activity::Policy activity;
+bool snmpCollectionEnabled = true, weatherCollectionEnabled = true;
 // Single-owner application state; only main.cpp includes this header.
 Resources::Cpu cpuTicks;
 TFT_eSPI tft;
-ESP8266WebServer web(80);
+#include "management_server.h"
+ManagementServer web(80);
 DNSServer dns;
 Weather::Client weatherClient;
 Weather::Reading weather;
 uint32_t weatherAttempt = 0;
 bool weatherStarted = false;
-struct Config {
-  String ssid, pass, nas = "192.168.1.100", community = "public", admin, storage = "", iface = "";
-  String snmpVersion = "2c", snmpUser, snmpPassword, snmpAuth = "MD5", snmpPrivacy = "none", snmpPrivacyPassword;
-  String cityCode = "101030100", ntpServer = "ntp.aliyun.com";
-  unsigned weatherEnabled = 1, weatherInterval = 10, rotation = 0, sound = 0;
-  String alarmTime = "07:00";
-  unsigned alarmEnabled = 0, snooze = 5, albumInterval = 10;
-  String language = "zh", clockColor = "#ffffff";
-  String nasBackground = "#21455c";
-  String minuteColor = "#ffa500", adminLanguage = "zh";
-  unsigned albumFixed = 0, showSeconds = 1;
-  unsigned alarmDays = 31, alarmTune = 0;
-  unsigned home = 6;
-  unsigned port = 161, interval = 5, brightness = 70;
-} cfg;
+unsigned weatherFailures = 0;
+#include "configuration_types.h"
+Config cfg;
+MachineProfile machines[MaxMachines];
+unsigned machineCount = 1, activeMachine = 0;
+String machineNotice;
+uint32_t machineNoticeUntil = 0;
+bool switchBeepPending = false;
+uint32_t switchBeepAt = 0;
 struct Metrics {
   String model, volume, iface;
   float cpu = -1, memory = -1, storage = -1, temp = -1, rx = -1, tx = -1;
@@ -37,21 +35,25 @@ Dashboard::State screen;
 TFT_eSprite frame(&tft);
 bool ap = false, qrPage = false, reboot = false, discover = false;
 uint32_t paintAt = 0, rebootAt = 0, rebootDelay = 1200;
+bool displayDirty = false;
 int lastDisplay = -1;
 Touch::ResetConfirmation resetConfirm;
 Melodies::Player melody;
 String resetNonce;
 uint32_t resetNonceAt = 0;
-Touch::Action queuedTouch = Touch::None;
+bool machineSelectionDirty = false;
+uint32_t machineSelectionAt = 0;
+uint32_t touchSwitches = 0, touchBlocked = 0, selectionSaveFailures = 0;
 Touch::Button touchButton;
 Alarm::Clock alarmClock;
-NasExtra nasExtra;
+StorageCollector storageCollector;
 NetworkInterfaces networkInterfaces;
 bool alarmTest = false, jpegValidate = false;
 unsigned testTune = 0;
 uint32_t albumDraws = 0, animationDraws = 0;
 uint32_t bufferedDraws = 0, displayBufferFailures = 0;
 uint32_t renderMicros = 0, renderMaxMicros = 0;
+uint32_t renderRows = 0, partialDraws = 0;
 String desktopPaintKey;
 int desktopPaintPage = -1;
 int albumSlots[7], albumCount = 0, albumPosition = 0, albumDrawn = -1;

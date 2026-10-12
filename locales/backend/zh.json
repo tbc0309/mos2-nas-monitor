@@ -19,5 +19,12 @@
   "No photo": "没有照片。",
   "No active alarm": "没有活动闹钟。",
   "Invalid click count": "点击次数无效。",
-  "Reset confirmation expired": "重置确认已过期。"
+  "Reset confirmation expired": "重置确认已过期。",
+  "Connect to Wi-Fi": "连接 Wi-Fi",
+  "Sign in": "管理登录",
+  "Save & connect": "保存并连接",
+  "Saved.": "已保存。",
+  "Verify the city code before saving.": "请先校验城市代码再保存。",
+  "Saved. Applied immediately.": "已保存，已立即生效。",
+  "Saved. Sign in with the new password.": "已保存，请使用新密码重新登录。"
 }

@@ -1,23 +1,398 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MOS2-NAS</title><style>
-body{margin:0;background:#f4f6f8;color:#27343e;font:14px system-ui,-apple-system,'Segoe UI',sans-serif}main{max-width:980px;margin:auto;padding:28px 20px}header{display:flex;justify-content:space-between;align-items:center}h1{font-size:24px}h2{font-size:16px}h3{font-size:14px;margin-top:22px}a{color:#147e87}.layout{display:grid;grid-template-columns:380px 1fr;gap:36px;margin-top:28px}.device{width:320px;margin:auto;background:#171d27;padding:22px;border-radius:28px;border:1px solid #344053;box-shadow:0 16px 40px #0002}.device canvas{display:block;width:240px;height:240px;image-rendering:pixelated;margin:auto;max-width:100%;background:#102334;border-radius:3px;cursor:pointer}button{padding:9px 12px;border-radius:6px;border:1px solid #d5dfe6;background:white;color:#354957;cursor:pointer;margin:4px}.active{background:#e4f1f2;border-color:#157e87;color:#157e87}#touch{width:100%;margin:20px 0 0;background:#111925;border-color:#344053;color:#9aabbc}.panel{padding:20px;background:white;border:1px solid #dfe5ea;border-radius:10px}#source{color:#147e87}pre{white-space:pre-wrap;font-size:13px;color:#70808e}#caption{text-align:center;color:#70808e}@media(max-width:760px){.layout{grid-template-columns:1fr}.device{max-width:100%;box-sizing:border-box}}</style><main><header><h1>MOS2-NAS</h1><a href="/manage" id="manage">网页管理 →</a></header><div class="layout"><div><div class="device"><canvas id="screen" width="240" height="240"></canvas><button id="touch"></button></div><p id="caption"></p></div><div class="panel"><h2 id="navTitle"></h2><div id="pages"></div><div id="gestures"></div><p id="source"></p><pre id="state"></pre></div></div></main><script src="/i18n.js?v=1.1.1"></script><script>
-const canvas=document.getElementById('screen'),ctx=canvas.getContext('2d');let page=6,lang='zh',busy=false,lastState=null,tapTimer=0;
-const pages=['Overview','Network','CPU / memory','','Status','Weather','Clock','Photos','Disk health','All volumes'];const msg=key=>I18n.text(key,lang);
-const colors=n=>'rgb('+Math.round((n>>11&31)*255/31)+','+Math.round((n>>5&63)*255/63)+','+Math.round((n&31)*255/31)+')';
-function paint(commands){for(const [op,...v] of commands){ctx.fillStyle=ctx.strokeStyle=colors(v[op==='text'?3:v.length-1]);if(op==='rect')ctx.fillRect(v[0],v[1],v[2],v[3]);if(op==='round'){ctx.beginPath();ctx.roundRect(v[0],v[1],v[2],v[3],v[4]);ctx.fill();}if(op==='line'){ctx.beginPath();ctx.moveTo(v[0],v[1]);ctx.lineTo(v[2],v[3]);ctx.stroke();}if(op==='circle'){ctx.beginPath();ctx.arc(v[0],v[1],v[2],0,Math.PI*2);ctx.fill();}if(op==='triangle'){ctx.beginPath();ctx.moveTo(v[0],v[1]);ctx.lineTo(v[2],v[3]);ctx.lineTo(v[4],v[5]);ctx.closePath();ctx.fill();}if(op==='text'&&v[2]!==0){ctx.font=({1:12,2:16,3:20,4:26}[v[2]])+'px TencentSans';ctx.textBaseline=v[4]===4?'middle':'top';ctx.textAlign=v[4]===2?'right':v[4]===4?'center':'left';ctx.fillText(v[5],v[0],v[1]);}}}
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>MOS2-NAS</title
+  ><style>
+    body {
+      margin: 0;
+      background: #f4f6f8;
+      color: #27343e;
+      font:
+        14px system-ui,
+        -apple-system,
+        "Segoe UI",
+        sans-serif;
+    }
+    main {
+      max-width: 980px;
+      margin: auto;
+      padding: 28px 20px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    h1 {
+      font-size: 24px;
+    }
+    h2 {
+      font-size: 16px;
+    }
+    h3 {
+      font-size: 14px;
+      margin-top: 22px;
+    }
+    a {
+      color: #147e87;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 36px;
+      margin-top: 28px;
+    }
+    .device {
+      width: 320px;
+      margin: auto;
+      background: #171d27;
+      padding: 22px;
+      border-radius: 28px;
+      border: 1px solid #344053;
+      box-shadow: 0 16px 40px #0002;
+    }
+    .device canvas {
+      display: block;
+      width: 240px;
+      height: 240px;
+      image-rendering: pixelated;
+      margin: auto;
+      max-width: 100%;
+      background: #102334;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    button {
+      padding: 9px 12px;
+      border-radius: 6px;
+      border: 1px solid #d5dfe6;
+      background: white;
+      color: #354957;
+      cursor: pointer;
+      margin: 4px;
+    }
+    .active {
+      background: #e4f1f2;
+      border-color: #157e87;
+      color: #157e87;
+    }
+    #touch {
+      width: 100%;
+      margin: 20px 0 0;
+      background: #111925;
+      border-color: #344053;
+      color: #9aabbc;
+    }
+    .panel {
+      padding: 20px;
+      background: white;
+      border: 1px solid #dfe5ea;
+      border-radius: 10px;
+    }
+    #source {
+      color: #147e87;
+    }
+    pre {
+      white-space: pre-wrap;
+      font-size: 13px;
+      color: #70808e;
+    }
+    #caption {
+      text-align: center;
+      color: #70808e;
+    }
+    @media (max-width: 760px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .device {
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+    }
+  </style>
+  <main>
+    <header>
+      <h1>MOS2-NAS</h1>
+      <a href="/manage" id="manage">网页管理 →</a>
+    </header>
+    <div class="layout">
+      <div>
+        <div class="device">
+          <canvas id="screen" width="240" height="240"></canvas
+          ><button id="touch"></button>
+        </div>
+        <p id="caption"></p>
+      </div>
+      <div class="panel">
+        <h2 id="navTitle"></h2>
+        <div id="pages"></div>
+        <div id="gestures"></div>
+        <p id="source"></p>
+        <pre id="state"></pre>
+      </div>
+    </div>
+  </main>
+  <script src="/i18n.js?v=1.2.0"></script>
+  <script>
+    const canvas = document.getElementById("screen"),
+      ctx = canvas.getContext("2d");
+    let page = 6,
+      lang = "zh",
+      busy = false,
+      lastState = null,
+      tapTimer = 0;
+    const pages = [
+      "Overview",
+      "Network",
+      "CPU / memory",
+      "",
+      "Status",
+      "Weather",
+      "Clock",
+      "Photos",
+      "Disk health",
+      "All volumes",
+    ];
+    const msg = (key) => I18n.text(key, lang);
+    const colors = (n) =>
+      "rgb(" +
+      Math.round((((n >> 11) & 31) * 255) / 31) +
+      "," +
+      Math.round((((n >> 5) & 63) * 255) / 63) +
+      "," +
+      Math.round(((n & 31) * 255) / 31) +
+      ")";
+    function paint(commands) {
+      for (const [op, ...v] of commands) {
+        ctx.fillStyle = ctx.strokeStyle = colors(
+          v[op === "text" ? 3 : v.length - 1],
+        );
+        if (op === "rect") ctx.fillRect(v[0], v[1], v[2], v[3]);
+        if (op === "round") {
+          ctx.beginPath();
+          ctx.roundRect(v[0], v[1], v[2], v[3], v[4]);
+          ctx.fill();
+        }
+        if (op === "line") {
+          ctx.beginPath();
+          ctx.moveTo(v[0], v[1]);
+          ctx.lineTo(v[2], v[3]);
+          ctx.stroke();
+        }
+        if (op === "circle") {
+          ctx.beginPath();
+          ctx.arc(v[0], v[1], v[2], 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (op === "triangle") {
+          ctx.beginPath();
+          ctx.moveTo(v[0], v[1]);
+          ctx.lineTo(v[2], v[3]);
+          ctx.lineTo(v[4], v[5]);
+          ctx.closePath();
+          ctx.fill();
+        }
+        if (op === "text" && v[2] !== 0) {
+          ctx.font = { 1: 12, 2: 16, 3: 20, 4: 26 }[v[2]] + "px TencentSans";
+          ctx.textBaseline = v[4] === 4 ? "middle" : "top";
+          ctx.textAlign = v[4] === 2 ? "right" : v[4] === 4 ? "center" : "left";
+          ctx.fillText(v[5], v[0], v[1]);
+        }
+      }
+    }
 
-const photos=new Map();let previousPhoto=null;
-async function select(n){await fetch('/api/simulator/page',{method:'POST',body:new URLSearchParams({page:n,token:'{{token}}'})});update();}
-[6,5,7,0,1,2,8,9,4].forEach(n=>{if(n===6||n===0){let h=document.createElement('h3');h.dataset.group=n;document.getElementById('pages').append(h);}let b=document.createElement('button');b.dataset.page=n;b.onclick=()=>select(n);document.getElementById('pages').append(b);});
-async function touch(action){await fetch('/api/touch',{method:'POST',body:new URLSearchParams({count:action,token:'{{token}}'})});update();}
-let burst=0;
-function shortTap(){burst++;clearTimeout(tapTimer);tapTimer=setTimeout(()=>{const count=burst;burst=0;tapTimer=0;if(count<=7&&count!==6)touch(count);},350);}
-canvas.onclick=document.getElementById('touch').onclick=shortTap;
-[[2,'Double tap · More'],[3,'Triple tap · Mode'],[5,'Five taps · Management'],[6,'Six taps · Wi-Fi'],[8,'Eight taps · Reset']].forEach(([count,key])=>{let b=document.createElement('button');b.dataset.i18n=key;b.onclick=()=>touch(count);document.getElementById('gestures').append(b);});
-async function update(){if(busy)return;busy=true;try{let d=await(await fetch('/api/display')).json();if(d.error)throw Error(d.error);const s=d.status;lastState=s;page=s.page;lang=s.language||'zh';document.documentElement.lang=lang;document.getElementById('manage').textContent=msg("Management →");document.getElementById('touch').textContent=s.resetPending?msg("Tap three times to confirm"):msg("Tap: next page");document.getElementById('navTitle').textContent=msg("Pages & controls");for(const b of document.querySelectorAll('#pages button')){b.textContent=msg(pages[+b.dataset.page]);b.className=+b.dataset.page===page?'active':'';}for(const g of document.querySelectorAll('[data-group]'))g.textContent=g.dataset.group==='6'?msg("Desktop"):msg("NAS monitor");I18n.apply(document,lang);
-const album=page===7&&!s.uiMode&&!s.resetPending&&(s.album||[]).length;
-if(album){const entries=s.album,entry=entries.find(e=>e.slot===s.albumSlot)||entries[0],url=entry.url;let img=photos.get(url);if(!img){img=new Image();photos.set(url,img);img.onload=()=>{if(lastState&&lastState.page===7&&!lastState.uiMode&&!lastState.resetPending){ctx.drawImage(img,0,0,240,240);previousPhoto=img;}};img.src=url;}if(img.complete&&img.naturalWidth){ctx.drawImage(img,0,0,240,240);previousPhoto=img;}else if(!previousPhoto)paint(d.commands);}
-else{paint(d.commands);previousPhoto=null;}
-document.getElementById('caption').textContent=s.resetPending?msg("Reset confirmation"):s.uiMode?s.uiMode==='setup'?msg("Wi-Fi setup"):msg("Management"):msg(pages[page]);document.querySelector('#pages button[data-page="5"]').disabled=!s.weather.enabled;canvas.style.transform='rotate('+(s.rotation*90)+'deg)';document.getElementById('source').textContent=(s.online?msg("Online"):msg("Offline"))+' · SNMP';document.getElementById('state').textContent=(s.model||'--')+' · '+(s.interface||'--')+'\n'+s.disks.length+msg(" disks / ")+s.volumes.length+msg(" volumes")+'\n'+msg("Alarm: ")+[msg("Idle"),msg("Ringing"),msg("Snoozed"),msg("Dismissed today")][s.alarm.state]+'\n'+(lang==='en'?s.weather.cityEnglish:s.weather.city||'')+' '+(s.weather.valid?s.weather.temperature+'°C':'');}catch(e){document.getElementById('source').textContent=e.message;}finally{busy=false;}}const originalFrames=Array.from({length:10},(_,i)=>{let im=new Image();im.src='/assets/original-animation-'+i+'.jpg';im.onload=()=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const g=c.getContext('2d');g.drawImage(im,0,0);const d=g.getImageData(0,0,c.width,c.height);for(let k=0;k<d.data.length;k+=4)if(d.data[k]<=31&&d.data[k+1]<=27&&d.data[k+2]<=31){d.data[k]=33;d.data[k+1]=69;d.data[k+2]=92;}g.putImageData(d,0,0);im.processed=c;};return im;});
-setInterval(()=>{if(!lastState||lastState.uiMode||lastState.resetPending||page!==5)return;const im=originalFrames[Math.floor(performance.now()/37)%10];if(im.complete&&im.naturalWidth)ctx.drawImage(im.processed||im,160,160);},37);
-update();setInterval(update,500);
-</script></html>
+    const photos = new Map();
+    let previousPhoto = null;
+    async function select(n) {
+      const response = await fetch("/api/simulator/page", {
+        method: "POST",
+        body: new URLSearchParams({ page: n, token: "{{token}}" }),
+      });
+      if (response.status === 401 || response.status === 403) {
+        location.href = "/manage";
+        return;
+      }
+      update();
+    }
+    [6, 5, 7, 0, 1, 2, 8, 9, 4].forEach((n) => {
+      if (n === 6 || n === 0) {
+        let h = document.createElement("h3");
+        h.dataset.group = n;
+        document.getElementById("pages").append(h);
+      }
+      let b = document.createElement("button");
+      b.dataset.page = n;
+      b.onclick = () => select(n);
+      document.getElementById("pages").append(b);
+    });
+    async function touch(action) {
+      const response = await fetch("/api/touch", {
+        method: "POST",
+        body: new URLSearchParams({ count: action, token: "{{token}}" }),
+      });
+      if (response.status === 401 || response.status === 403) {
+        location.href = "/manage";
+        return;
+      }
+      update();
+    }
+    let burst = 0;
+    function shortTap() {
+      burst++;
+      clearTimeout(tapTimer);
+      tapTimer = setTimeout(() => {
+        const count = burst;
+        burst = 0;
+        tapTimer = 0;
+        if (count <= 8 && count !== 4 && count !== 7) touch(count);
+      }, 350);
+    }
+    for (const target of [canvas, document.getElementById("touch")]) {
+      target.onclick = shortTap;
+    }
+    [
+      [2, "Double tap · More"],
+      [3, "Triple tap · Mode"],
+      [5, "Five taps · Management"],
+      [6, "Six taps · Wi-Fi"],
+      [8, "Eight taps · Reset"],
+    ].forEach(([count, key]) => {
+      let b = document.createElement("button");
+      b.dataset.i18n = key;
+      b.onclick = () => touch(count);
+      document.getElementById("gestures").append(b);
+    });
+    async function update() {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        let d = await (
+          await fetch("/api/display", { signal: AbortSignal.timeout(6000) })
+        ).json();
+        if (d.error) throw Error(d.error);
+        const s = d.status;
+        lastState = s;
+        page = s.page;
+        lang = s.language || "zh";
+        document.documentElement.lang = lang;
+        document.getElementById("manage").textContent = msg("Management →");
+        document.getElementById("touch").textContent = s.resetPending
+          ? msg("Tap three times to confirm")
+          : msg("Tap: next page");
+        document.getElementById("navTitle").textContent =
+          msg("Pages & controls");
+        for (const b of document.querySelectorAll("#pages button")) {
+          b.textContent = msg(pages[+b.dataset.page]);
+          b.className = +b.dataset.page === page ? "active" : "";
+        }
+        for (const g of document.querySelectorAll("[data-group]"))
+          g.textContent =
+            g.dataset.group === "6" ? msg("Desktop") : msg("NAS monitor");
+        I18n.apply(document, lang);
+        const album =
+          page === 7 && !s.uiMode && !s.resetPending && (s.album || []).length;
+        if (album) {
+          const entries = s.album,
+            entry = entries.find((e) => e.slot === s.albumSlot) || entries[0],
+            url = entry.url;
+          let img = photos.get(url);
+          if (!img) {
+            img = new Image();
+            photos.set(url, img);
+            img.onload = () => {
+              if (
+                lastState &&
+                lastState.page === 7 &&
+                !lastState.uiMode &&
+                !lastState.resetPending
+              ) {
+                ctx.drawImage(img, 0, 0, 240, 240);
+                previousPhoto = img;
+              }
+            };
+            img.src = url;
+          }
+          if (img.complete && img.naturalWidth) {
+            ctx.drawImage(img, 0, 0, 240, 240);
+            previousPhoto = img;
+          } else if (!previousPhoto) paint(d.commands);
+        } else {
+          paint(d.commands);
+          previousPhoto = null;
+        }
+        document.getElementById("caption").textContent = s.resetPending
+          ? msg("Reset confirmation")
+          : s.uiMode
+            ? s.uiMode === "setup"
+              ? msg("Wi-Fi setup")
+              : msg("Management")
+            : msg(pages[page]);
+        document.querySelector('#pages button[data-page="5"]').disabled =
+          !s.weather.enabled;
+        canvas.style.transform = "rotate(" + s.rotation * 90 + "deg)";
+        document.getElementById("source").textContent =
+          (s.online ? msg("Online") : msg("Offline")) + " · SNMP";
+        document.getElementById("state").textContent =
+          (s.model || "--") +
+          " · " +
+          (s.interface || "--") +
+          "\n" +
+          s.disks.length +
+          msg(" disks / ") +
+          s.volumes.length +
+          msg(" volumes") +
+          "\n" +
+          msg("Alarm: ") +
+          [msg("Idle"), msg("Ringing"), msg("Snoozed"), msg("Dismissed today")][
+            s.alarm.state
+          ] +
+          "\n" +
+          (lang === "en" ? s.weather.cityEnglish : s.weather.city || "") +
+          " " +
+          (s.weather.valid ? s.weather.temperature + "°C" : "");
+      } catch (e) {
+        document.getElementById("source").textContent = e.message;
+      } finally {
+        busy = false;
+      }
+    }
+    const originalFrames = Array.from({ length: 10 }, (_, i) => {
+      let im = new Image();
+      im.src = "/assets/original-animation-" + i + ".jpg";
+      im.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = im.naturalWidth;
+        c.height = im.naturalHeight;
+        const g = c.getContext("2d");
+        g.drawImage(im, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height);
+        for (let k = 0; k < d.data.length; k += 4)
+          if (d.data[k] <= 31 && d.data[k + 1] <= 27 && d.data[k + 2] <= 31) {
+            d.data[k] = 33;
+            d.data[k + 1] = 69;
+            d.data[k + 2] = 92;
+          }
+        g.putImageData(d, 0, 0);
+        im.processed = c;
+      };
+      return im;
+    });
+    setInterval(() => {
+      if (
+        !lastState ||
+        lastState.uiMode ||
+        lastState.resetPending ||
+        page !== 5
+      )
+        return;
+      const im = originalFrames[Math.floor(performance.now() / 37) % 10];
+      if (im.complete && im.naturalWidth)
+        ctx.drawImage(im.processed || im, 160, 160);
+    }, 37);
+    update();
+    setInterval(update, 500);
+  </script>
+</html>

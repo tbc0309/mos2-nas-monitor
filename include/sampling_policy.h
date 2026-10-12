@@ -12,4 +12,12 @@ constexpr uint32_t LiveMinimumTtl = 30000, DiskTtl = 7200000, VolumeTtl = 144000
 constexpr uint32_t DiskTemperaturePeriod = 300000, DiskTemperatureTtl = 900000;
 constexpr uint32_t DiskPeriod = 3600000, VolumePeriod = 7200000, TableTtl = 7200000;
 constexpr uint32_t WeatherTimeout = 3500, WeatherRetry = 60000;
+// One prompt retry, then progressively reduce load during sustained outages.
+inline uint32_t weatherRetry(unsigned failures) {
+  if (failures <= 1) return WeatherRetry;
+  if (failures == 2) return 300000;
+  if (failures == 3) return 600000;
+  if (failures == 4) return 1200000;
+  return 1800000;
+}
 }

@@ -1,8 +1,11 @@
 #pragma once
 String diskStatus() {
+  unsigned order[12];
+  for (unsigned i = 0; i < storageCollector.diskCount; ++i) order[i] = i;
+  StorageOrder::sort(order, storageCollector.diskCount, [](unsigned i) { return storageCollector.disks[i].index.c_str(); });
   String j = "[";
-  for (unsigned i = 0; i < nasExtra.diskCount; i++) {
-    const auto &d = nasExtra.disks[i];
+  for (unsigned i = 0; i < storageCollector.diskCount; i++) {
+    const auto &d = storageCollector.disks[order[i]];
     if (i)
       j += ',';
     j += "{\"name\":" + jsonString(d.name) + ",\"model\":" + jsonString(d.model) +
@@ -12,9 +15,12 @@ String diskStatus() {
   return j + "]";
 }
 String volumeStatus() {
+  unsigned order[8];
+  for (unsigned i = 0; i < storageCollector.volumeCount; ++i) order[i] = i;
+  StorageOrder::sort(order, storageCollector.volumeCount, [](unsigned i) { return storageCollector.volumes[i].name.c_str(); });
   String j = "[";
-  for (unsigned i = 0; i < nasExtra.volumeCount; i++) {
-    const auto &d = nasExtra.volumes[i];
+  for (unsigned i = 0; i < storageCollector.volumeCount; i++) {
+    const auto &d = storageCollector.volumes[order[i]];
     if (i)
       j += ',';
     j += "{\"name\":" + jsonString(d.name) + ",\"total\":" + String((double)(d.size * d.units), 0) +
@@ -28,7 +34,7 @@ String alarmStatus() {
   struct tm local;
   localtime_r(&now, &local);
   return "{\"enabled\":" + String(cfg.alarmEnabled) + ",\"time\":" + jsonString(cfg.alarmTime) +
-         ",\"state\":" + String(alarmClock.state) + ",\"days\":" + String(cfg.alarmDays) +
+         ",\"state\":" + String(alarmClock.state) + ",\"days\":" + String(cfg.alarmWeekdayMask) +
          ",\"weekday\":" + String((local.tm_wday + 6) % 7) +
          ",\"lastDay\":" + String(alarmClock.lastDay) + ",\"remaining\":" +
          String(alarmClock.state == Alarm::Snoozed && alarmClock.due > uint32_t(time(nullptr))
@@ -136,24 +142,24 @@ void commitPhoto() {
     return;
   }
   String target = photoPath(slot);
-  bool old = LittleFS.exists(target);
-  LittleFS.remove("/photo-backup.jpg");
-  if (old && !LittleFS.rename(target, "/photo-backup.jpg")) {
+  // lfs_rename atomically replaces the destination. Moving the old photo away
+  // first creates a power-loss window where its album slot is missing.
+  if (!LittleFS.rename("/incoming.jpg", target)) {
     LittleFS.remove("/incoming.jpg");
     web.send(500, "text/plain; charset=utf-8", WebMessages::text("Storage error", cfg.adminLanguage == "en"));
     return;
   }
-  if (!LittleFS.rename("/incoming.jpg", target)) {
-    if (old)
-      LittleFS.rename("/photo-backup.jpg", target);
-    web.send(500, "text/plain; charset=utf-8", WebMessages::text("Storage error", cfg.adminLanguage == "en"));
-    return;
-  }
-  LittleFS.remove("/photo-backup.jpg");
   scanAlbum();
   web.send(200, "application/json", "{}");
 }
 void registerExtras() {
+  web.on("/api/storage/rediscover", HTTP_POST, []() {
+    if (!tokenOK()) return;
+    static uint32_t requestedAt = 0;
+    if (requestedAt && millis() - requestedAt < 60000) { web.send(429, "text/plain", "Discovery already requested"); return; }
+    requestedAt = millis(); storageCollector.rediscover();
+    web.send(200, "application/json", "{}");
+  });
   web.on("/api/language", HTTP_POST, []() {
     if (!tokenOK())
       return;
@@ -169,8 +175,6 @@ void registerExtras() {
       web.send(500, "text/plain; charset=utf-8", WebMessages::text("Configuration write failed", cfg.adminLanguage == "en"));
       return;
     }
-    lastDisplay = -1;
-    draw();
     web.send(200, "application/json", "{}");
   });
   web.on("/api/album", HTTP_GET, albumList);
@@ -188,7 +192,16 @@ void registerExtras() {
       return;
     }
     web.sendHeader("Cache-Control", "no-store");
-    web.streamFile(f, "image/jpeg");
+    // File streams otherwise fall back to tiny synchronous TCP writes.
+    // Reuse the bounded transfer workspace instead of allocating a JPEG buffer.
+    web.setContentLength(f.size());
+    web.send(200, "image/jpeg", "");
+    while (f.available() && web.client().connected()) {
+      size_t count = f.read(RuntimeWorkspace::bytes, sizeof(RuntimeWorkspace::bytes));
+      if (!count) break;
+      web.sendContent(reinterpret_cast<const char *>(RuntimeWorkspace::bytes), count);
+      yield();
+    }
     f.close();
   });
   web.on("/api/album/upload", HTTP_POST, commitPhoto, uploadPhoto);
@@ -207,14 +220,12 @@ void registerExtras() {
   web.on("/api/alarm/test", HTTP_POST, []() {
     if (!tokenOK())
       return;
-    testTune = web.hasArg("tune") ? constrain(web.arg("tune").toInt(), 0L, 3L) : cfg.alarmTune;
+    testTune = web.hasArg("tune") ? constrain(web.arg("tune").toInt(), 0L, 3L) : cfg.alarmMelody;
     alarmTest = true;
-    alarmClock.state = Alarm::Ringing;
-    alarmClock.ringStarted = time(nullptr);
-    alarmClock.taps = 0;
+    alarmClock.start(time(nullptr));
     page = 6;
     qrPage = false;
-    draw();
+    requestDraw();
     web.send(200, "application/json", alarmStatus());
   });
   web.on("/api/alarm/tap", HTTP_POST, []() {
@@ -225,7 +236,7 @@ void registerExtras() {
       return;
     }
     alarmTap();
-    draw();
+    requestDraw();
     web.send(200, "application/json", alarmStatus());
   });
   web.on("/api/touch", HTTP_POST, []() {
@@ -252,7 +263,7 @@ void registerExtras() {
   web.on("/api/reset/request", HTTP_POST, []() {
     if (!tokenOK())
       return;
-    resetNonce = String(ESP.random(), HEX) + String(ESP.random(), HEX);
+    resetNonce = randomToken();
     resetNonceAt = millis();
     web.send(200, "application/json", "{\"nonce\":" + jsonString(resetNonce) + "}");
   });

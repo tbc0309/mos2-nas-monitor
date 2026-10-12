@@ -3,6 +3,7 @@
 #include <algorithm>
 #define NATIVE_UI
 #include "dashboard.h"
+#include "dirty_bands.h"
 struct Recorder {
  std::ostream& out;unsigned color=0;int datum=0;
  Recorder():out(std::cout){}
@@ -26,5 +27,6 @@ int main(int argc,char** argv){Dashboard::State s;unsigned page=0;std::cin>>page
  std::cin>>s.volumeCount;s.volumeCount=std::min(8u,s.volumeCount);for(unsigned i=0;i<s.volumeCount;i++){auto& v=s.volumes[i];std::cin>>v.name>>v.units>>v.size>>v.used>>v.valid;}
  std::string language="zh",color="#ffffff";std::cin>>language>>color>>s.diskGroup>>s.volumeGroup>>s.resetPending;Ui::chinese=language=="zh";unsigned rgb=std::strtoul(color.c_str()+1,nullptr,16);Dashboard::palette[Dashboard::SOFTRED]=((rgb>>19)&31)<<11|((rgb>>10)&63)<<5|((rgb>>3)&31);
  std::string minuteColor="#ffa500";std::cin>>minuteColor>>s.showSeconds>>s.weekday>>s.animationFrame;rgb=std::strtoul(minuteColor.c_str()+1,nullptr,16);Dashboard::palette[Dashboard::SOFTGREEN]=((rgb>>19)&31)<<11|((rgb>>10)&63)<<5|((rgb>>3)&31);
+ std::replace(s.model.begin(),s.model.end(),'_',' ');
  for(unsigned i=0;i<s.diskCount;i++){auto& disk=s.disks[i];std::replace(disk.name.begin(),disk.name.end(),'_',' ');std::replace(disk.model.begin(),disk.model.end(),'_',' ');}
- std::string bg="#21455c";std::cin>>bg;std::cin>>s.privacy;std::cin>>s.security;if(s.security=="-")s.security="";rgb=std::strtoul(bg.c_str()+1,nullptr,16);Dashboard::palette[Dashboard::BG]=(page==5||page==6||page==7)?0x222b:((rgb>>19)&31)<<11|((rgb>>10)&63)<<5|((rgb>>3)&31);Recorder r;int tile=argc>1?std::atoi(argv[1]):240;if(tile<=0||240%tile)return 2;for(int top=0;top<240;top+=tile){Cjk::clipTop=top;Cjk::clipBottom=top+tile;if(argc>1)std::cout<<"clip\t"<<top<<"\t"<<top+tile<<"\n";Dashboard::render(r,s,page%10);}}
+ std::string bg="#21455c";std::cin>>bg;std::cin>>s.privacy;std::cin>>s.security;if(s.security=="-")s.security="";rgb=std::strtoul(bg.c_str()+1,nullptr,16);Dashboard::palette[Dashboard::BG]=(page==5||page==6||page==7)?0x222b:((rgb>>19)&31)<<11|((rgb>>10)&63)<<5|((rgb>>3)&31);std::getline(std::cin,row); if(std::getline(std::cin,row))s.machineNotice=row; if(std::getline(std::cin,row))s.machineLabel=row; if(std::getline(std::cin,row) && row.size()==7 && row[0]=='#'){rgb=std::strtoul(row.c_str()+1,nullptr,16);Dashboard::palette[Dashboard::PANEL]=((rgb>>19)&31)<<11|((rgb>>10)&63)<<5|((rgb>>3)&31);} std::cin>>s.cityScrollMs; if(argc>2 && std::string(argv[2])=="bands") { auto plan=DirtyBands::monitor(s,page); for(auto v:plan.hash) std::cout<<v<<" "; return 0; } Recorder r;int tile=argc>1?std::atoi(argv[1]):240;if(tile<=0||tile>240)return 2;for(int top=0;top<240;top+=tile){Cjk::clipTop=top;Cjk::clipBottom=top+tile>240?240:top+tile;if(argc>1)std::cout<<"clip\t"<<top<<"\t"<<Cjk::clipBottom<<"\n";Dashboard::render(r,s,page%10);}}

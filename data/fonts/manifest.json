@@ -1,39 +1,169 @@
 {
-  "version": 2,
+  "version": 3,
   "levels": 16,
-  "bytes": 754046,
-  "crc32": 2049206613,
-  "primaryGlyphs": 514,
-  "commonGlyphs": 3865,
+  "bytes": 331698,
+  "crc32": 1448733016,
+  "primaryGlyphs": 698,
+  "commonGlyphs": 698,
   "fallbackGlyphs": 0,
   "sizes": [
     {
       "cell": 12,
       "pixels": 10,
       "baseline": 9,
-      "bytes": 240434,
-      "intermediatePixels": 285302
+      "bytes": 40443,
+      "intermediatePixels": 45372
     },
     {
       "cell": 16,
       "pixels": 13,
       "baseline": 11,
-      "bytes": 347510,
-      "intermediatePixels": 384770
+      "bytes": 57619,
+      "intermediatePixels": 60572
     },
     {
       "cell": 20,
       "pixels": 17,
       "baseline": 14,
-      "bytes": 65208,
-      "intermediatePixels": 58024
+      "bytes": 91421,
+      "intermediatePixels": 83240
     },
     {
       "cell": 26,
       "pixels": 23,
       "baseline": 19,
-      "bytes": 100870,
-      "intermediatePixels": 76519
+      "bytes": 141807,
+      "intermediatePixels": 110289
+    }
+  ],
+  "banks": [
+    {
+      "file": "latin-12.bin",
+      "group": "latin",
+      "cell": 12,
+      "bytes": 3424,
+      "crc32": 212046133,
+      "glyphs": 95
+    },
+    {
+      "file": "interface-12.bin",
+      "group": "interface",
+      "cell": 12,
+      "bytes": 9611,
+      "crc32": 968895047,
+      "glyphs": 164
+    },
+    {
+      "file": "weather-12.bin",
+      "group": "weather",
+      "cell": 12,
+      "bytes": 4573,
+      "crc32": 1849122675,
+      "glyphs": 73
+    },
+    {
+      "file": "geography-12.bin",
+      "group": "geography",
+      "cell": 12,
+      "bytes": 22931,
+      "crc32": 2897565719,
+      "glyphs": 366
+    },
+    {
+      "file": "latin-16.bin",
+      "group": "latin",
+      "cell": 16,
+      "bytes": 4712,
+      "crc32": 4202594081,
+      "glyphs": 95
+    },
+    {
+      "file": "interface-16.bin",
+      "group": "interface",
+      "cell": 16,
+      "bytes": 13656,
+      "crc32": 1798384705,
+      "glyphs": 164
+    },
+    {
+      "file": "weather-16.bin",
+      "group": "weather",
+      "cell": 16,
+      "bytes": 6488,
+      "crc32": 1268211521,
+      "glyphs": 73
+    },
+    {
+      "file": "geography-16.bin",
+      "group": "geography",
+      "cell": 16,
+      "bytes": 32859,
+      "crc32": 427119355,
+      "glyphs": 366
+    },
+    {
+      "file": "latin-20.bin",
+      "group": "latin",
+      "cell": 20,
+      "bytes": 6596,
+      "crc32": 551597074,
+      "glyphs": 95
+    },
+    {
+      "file": "interface-20.bin",
+      "group": "interface",
+      "cell": 20,
+      "bytes": 21763,
+      "crc32": 2256424848,
+      "glyphs": 164
+    },
+    {
+      "file": "weather-20.bin",
+      "group": "weather",
+      "cell": 20,
+      "bytes": 10326,
+      "crc32": 1739372932,
+      "glyphs": 73
+    },
+    {
+      "file": "geography-20.bin",
+      "group": "geography",
+      "cell": 20,
+      "bytes": 52832,
+      "crc32": 712289746,
+      "glyphs": 366
+    },
+    {
+      "file": "latin-26.bin",
+      "group": "latin",
+      "cell": 26,
+      "bytes": 10394,
+      "crc32": 870111164,
+      "glyphs": 95
+    },
+    {
+      "file": "interface-26.bin",
+      "group": "interface",
+      "cell": 26,
+      "bytes": 33389,
+      "crc32": 1418995119,
+      "glyphs": 164
+    },
+    {
+      "file": "weather-26.bin",
+      "group": "weather",
+      "cell": 26,
+      "bytes": 16107,
+      "crc32": 3670619507,
+      "glyphs": 73
+    },
+    {
+      "file": "geography-26.bin",
+      "group": "geography",
+      "cell": 26,
+      "bytes": 82013,
+      "crc32": 1074946414,
+      "glyphs": 366
     }
   ]
 }

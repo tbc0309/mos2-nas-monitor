@@ -25,7 +25,9 @@ void receiveFirmware() {
   if (u.status == UPLOAD_FILE_START) {
     if (firmwareStarted) cancelFirmware("invalid");
     firmwareAccepted = false; firmwareError = "invalid";
+    if (!requestOriginOK()) { firmwareError = "origin"; return; }
     if (!sessionValid()) { firmwareError = "login_required"; return; }
+    if (cfg.adminDefault) { firmwareError = "password_change_required"; return; }
     if (web.header("X-CSRF-Token") != csrf) { firmwareError = "csrf"; return; }
     if (reboot) { firmwareError = "busy"; return; }
     String sizeText = web.arg("size"), crcText = web.arg("crc");
@@ -63,7 +65,7 @@ void receiveFirmware() {
   }
 }
 void finishFirmware() {
-  if (!sessionValid()) { web.send(401, "application/json", "{\"error\":\"login_required\"}"); return; }
+  if (!authorized()) return;
   if (web.header("X-CSRF-Token") != csrf) { web.send(403,"application/json","{\"error\":\"csrf\"}"); return; }
   web.sendHeader("Connection", "close");
   if (!firmwareAccepted) {

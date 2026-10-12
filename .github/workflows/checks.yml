@@ -19,10 +19,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: pip install platformio==6.2.0 -r simulator/requirements.txt
-      - run: pio run
-      - run: python tools/check.py
+      - run: pip install platformio==6.2.0
+      - name: Verify generated resources
+        run: |
+          python tools/embed_locales.py
+          python tools/embed_web.py
+          python tools/embed_font_hot.py
+          git diff --exit-code -- include web
+      - run: pio run -e mos2
+      - run: pio run -e mos2 -t buildfs
+      - run: python tools/build_install_image.py --output dist/MOS2-NAS-1.2.0.bin
 

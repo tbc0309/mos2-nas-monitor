@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 simulator/renderer.exe
 simulator/renderer
+*.exe
 simulator/photos/
 *.ttf
 *.otf
@@ -14,3 +15,7 @@ dist/
 
 # Local build tools and temporary validation output
 work/
+
+# Local-only regression suite
+/tests/
+/tools/local_check.py

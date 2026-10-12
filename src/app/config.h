@@ -1,4 +1,5 @@
 #pragma once
+#include "json_fields.h"
 String escapeHtml(String s) {
   s.replace("&", "&amp;");
   s.replace("<", "&lt;");
@@ -7,7 +8,7 @@ String escapeHtml(String s) {
   s.replace("'", "&#39;");
   return s;
 }
-String jsonString(String s) {
+String jsonString(const String &s) {
   String r = "\"";
   for (unsigned i = 0; i < s.length(); i++) {
     uint8_t c = s[i];
@@ -21,7 +22,7 @@ String jsonString(String s) {
   }
   return r + '"';
 }
-// Persistent schema 1 is independent of the firmware release number.
+// Persistent schema 3 is independent of the firmware release number.
 // Write to a temporary file and atomically rename only after a complete flush.
 String line(File &f) {
   String s = f.readStringUntil('\n');
@@ -29,55 +30,76 @@ String line(File &f) {
   return s;
 }
 bool save() {
-  // Configuration grew with USM credentials; keep this bounded buffer off the 4 KiB stack.
-  DynamicJsonDocument doc(3072);
-  doc["schema"] = 1;
-  doc["ssid"] = cfg.ssid;
-  doc["pass"] = cfg.pass;
-  doc["nas"] = cfg.nas;
-  doc["community"] = cfg.community;
-  doc["snmpVersion"] = cfg.snmpVersion;
-  doc["snmpUser"] = cfg.snmpUser;
-  doc["snmpPassword"] = cfg.snmpPassword;
-  doc["snmpPrivacy"] = cfg.snmpPrivacy;
-  doc["snmpPrivacyPassword"] = cfg.snmpPrivacyPassword;
-  doc["snmpAuth"] = cfg.snmpAuth;
-
-  doc["admin"] = cfg.admin;
-  doc["storage"] = cfg.storage;
-  doc["iface"] = cfg.iface;
-  doc["cityCode"] = cfg.cityCode;
-  doc["ntpServer"] = cfg.ntpServer;
-  doc["weatherEnabled"] = cfg.weatherEnabled;
-  doc["weatherInterval"] = cfg.weatherInterval;
-  doc["rotation"] = cfg.rotation;
-  doc["sound"] = cfg.sound;
-  doc["alarmTime"] = cfg.alarmTime;
-  doc["alarmEnabled"] = cfg.alarmEnabled;
-  doc["snooze"] = cfg.snooze;
-  doc["albumInterval"] = cfg.albumInterval;
-  doc["language"] = cfg.language;
-  doc["clockColor"] = cfg.clockColor;
-  doc["nasBackground"] = cfg.nasBackground;
-  doc["minuteColor"] = cfg.minuteColor;
-  doc["adminLanguage"] = cfg.adminLanguage;
-  doc["albumFixed"] = cfg.albumFixed;
-  doc["showSeconds"] = cfg.showSeconds;
-  doc["alarmDays"] = cfg.alarmDays;
-  doc["alarmTune"] = cfg.alarmTune;
-  doc["home"] = cfg.home;
-  doc["port"] = cfg.port;
-  doc["interval"] = cfg.interval;
-  doc["brightness"] = cfg.brightness;
-  if (doc.overflowed())
-    return false;
+  Serial.printf("SAVE begin heap=%u block=%u stack=%u\n", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize(), ESP.getFreeContStack());
+  captureMachine();
+  const bool defaultPassword = cfg.adminPasswordVerifier.startsWith("p2$") ? cfg.adminDefault : cfg.adminPasswordVerifier == "12345678";
+  const String verifier = cfg.adminPasswordVerifier.startsWith("p2$") ? cfg.adminPasswordVerifier : Credentials::passwordHash(cfg.adminPasswordVerifier);
   File f = LittleFS.open("/config.tmp", "w");
   if (!f)
     return false;
-  size_t expected = measureJson(doc), written = serializeJson(doc, f);
+  uint8_t keys[64];
+  if (!Credentials::key(keys, true)) { f.close(); LittleFS.remove("/config.tmp"); return false; }
+  // HTTP handlers already hold form data and rollback state on the 4 KiB
+  // continuation stack. Keep the crypto contexts off that nested stack.
+  // The single main-loop writer uses reusable storage: browser TCP bursts can
+  // fragment the heap even when total free memory would fit the crypto context.
+  static_assert(sizeof(Credentials::Writer) <= sizeof(RuntimeWorkspace::bytes), "Crypto workspace capacity");
+  Credentials::Writer *writer = new (RuntimeWorkspace::bytes) Credentials::Writer(f, keys);
+  JsonFields root(*writer);
+  root.field("schema", 3);
+  root.field("ssid", cfg.wifiSsid);
+  root.field("pass", cfg.wifiPassword);
+  root.field("admin", verifier);
+  root.field("adminDefault", defaultPassword);
+  root.field("cityCode", cfg.weatherCityCode);
+  root.field("ntpServer", cfg.timeServer);
+  root.field("weatherEnabled", cfg.weatherEnabled);
+  root.field("weatherInterval", cfg.weatherRefreshMinutes);
+  root.field("rotation", cfg.displayRotation);
+  root.field("sound", cfg.touchSoundEnabled);
+  root.field("alarmTime", cfg.alarmTime);
+  root.field("alarmEnabled", cfg.alarmEnabled);
+  root.field("snooze", cfg.alarmSnoozeMinutes);
+  root.field("albumInterval", cfg.photoIntervalSeconds);
+  root.field("language", cfg.displayLanguage);
+  root.field("clockColor", cfg.clockHourColor);
+  root.field("minuteColor", cfg.clockMinuteColor);
+  root.field("adminLanguage", cfg.adminLanguage);
+  root.field("albumFixed", cfg.photoFixedMode);
+  root.field("showSeconds", cfg.clockSecondsEnabled);
+  root.field("alarmDays", cfg.alarmWeekdayMask);
+  root.field("alarmTune", cfg.alarmMelody);
+  root.field("home", cfg.startupPage);
+  root.field("brightness", cfg.displayBrightnessPercent);
+  root.field("activeMachine", activeMachine);
+  root.key("machines"); writer->write('[');
+  for (unsigned i = 0; i < machineCount; ++i) {
+    if (i) writer->write(',');
+    const auto &m = machines[i];
+    JsonFields profile(*writer);
+    profile.field("nasBackground", m.monitorBackground);
+    profile.field("cardBackground", m.monitorCardBackground);
+    profile.field("name", m.name);
+    profile.field("nas", m.snmpHost);
+    profile.field("community", m.snmpCommunity);
+    profile.field("snmpVersion", m.snmpVersion);
+    profile.field("snmpUser", m.snmpUsername);
+    profile.field("snmpPassword", m.snmpAuthPassword);
+    profile.field("snmpAuth", m.snmpAuthProtocol);
+    profile.field("snmpPrivacy", m.snmpPrivacyProtocol);
+    profile.field("snmpPrivacyPassword", m.snmpPrivacyPassword);
+    profile.field("iface", m.networkInterfaceIndex);
+    profile.field("storage", m.storageVolumeIndex);
+    profile.field("port", m.snmpPort);
+    profile.field("interval", m.snmpPollIntervalSeconds);
+    profile.finish();
+  }
+  writer->write(']'); root.finish();
+  const bool encrypted = writer->finish();
+  writer->~Writer();
   f.flush();
   f.close();
-  if (written != expected) {
+  if (!encrypted) {
     LittleFS.remove("/config.tmp");
     return false;
   }
@@ -85,6 +107,9 @@ bool save() {
     LittleFS.remove("/config.tmp");
     return false;
   }
+  cfg.adminPasswordVerifier = verifier; cfg.adminDefault = defaultPassword;
+  Serial.printf("SAVE complete heap=%u stack=%u\n", ESP.getFreeHeap(), ESP.getFreeContStack());
+  machineSelectionDirty = false;
   return true;
 }
 bool colorOK(const String &value) {
@@ -118,121 +143,107 @@ void load() {
     Serial.println("Blank filesystem initialized");
   }
   File f = LittleFS.open("/config.json", "r");
-  DynamicJsonDocument doc(3072);
-  if (f && !deserializeJson(doc, f) && doc["schema"] == 1) {
+  // Interrupted writes are uncommitted, never a second source of credentials.
+  LittleFS.remove("/config.tmp");
+  LittleFS.remove("/key.tmp");
+  LittleFS.remove("/incoming.jpg");
+  DynamicJsonDocument doc(JSON_OBJECT_SIZE(48) + JSON_ARRAY_SIZE(MaxMachines) + MaxMachines * JSON_OBJECT_SIZE(20));
+  String plaintext;
+  const bool validDocument = Credentials::read(f, plaintext) && !deserializeJson(doc, plaintext.begin()) &&
+                             doc["schema"] == 3 && String(doc["admin"] | "").startsWith("p2$");
+  if (validDocument) {
+    cfg.adminDefault = doc["adminDefault"] | false;
     if (doc["ssid"].is<const char *>())
-      cfg.ssid = doc["ssid"].as<String>();
+      cfg.wifiSsid = doc["ssid"].as<String>();
     if (doc["pass"].is<const char *>())
-      cfg.pass = doc["pass"].as<String>();
-    if (doc["nas"].is<const char *>())
-      cfg.nas = doc["nas"].as<String>();
-    if (doc["community"].is<const char *>())
-      cfg.community = doc["community"].as<String>();
-    if (doc["snmpVersion"].is<const char *>())
-      cfg.snmpVersion = doc["snmpVersion"].as<String>();
-    if (doc["snmpUser"].is<const char *>())
-      cfg.snmpUser = doc["snmpUser"].as<String>();
-    if (doc["snmpPassword"].is<const char *>())
-      cfg.snmpPassword = doc["snmpPassword"].as<String>();
-    if (doc["snmpPrivacy"].is<const char *>())
-      cfg.snmpPrivacy = doc["snmpPrivacy"].as<String>();
-    if (doc["snmpPrivacyPassword"].is<const char *>())
-      cfg.snmpPrivacyPassword = doc["snmpPrivacyPassword"].as<String>();
-    if (doc["snmpAuth"].is<const char *>())
-      cfg.snmpAuth = doc["snmpAuth"].as<String>();
+      cfg.wifiPassword = doc["pass"].as<String>();
     if (doc["admin"].is<const char *>())
-      cfg.admin = doc["admin"].as<String>();
-    if (doc["storage"].is<const char *>())
-      cfg.storage = doc["storage"].as<String>();
-    if (doc["iface"].is<const char *>())
-      cfg.iface = doc["iface"].as<String>();
+      cfg.adminPasswordVerifier = doc["admin"].as<String>();
     if (doc["cityCode"].is<const char *>())
-      cfg.cityCode = doc["cityCode"].as<String>();
+      cfg.weatherCityCode = doc["cityCode"].as<String>();
     if (doc["ntpServer"].is<const char *>())
-      cfg.ntpServer = doc["ntpServer"].as<String>();
+      cfg.timeServer = doc["ntpServer"].as<String>();
     if (doc["weatherEnabled"].is<unsigned>())
       cfg.weatherEnabled = doc["weatherEnabled"].as<unsigned>();
     if (doc["weatherInterval"].is<unsigned>())
-      cfg.weatherInterval = doc["weatherInterval"].as<unsigned>();
+      cfg.weatherRefreshMinutes = doc["weatherInterval"].as<unsigned>();
     if (doc["rotation"].is<unsigned>())
-      cfg.rotation = doc["rotation"].as<unsigned>();
+      cfg.displayRotation = doc["rotation"].as<unsigned>();
     if (doc["sound"].is<unsigned>())
-      cfg.sound = doc["sound"].as<unsigned>();
+      cfg.touchSoundEnabled = doc["sound"].as<unsigned>();
     if (doc["alarmTime"].is<const char *>())
       cfg.alarmTime = doc["alarmTime"].as<String>();
     if (doc["alarmEnabled"].is<unsigned>())
       cfg.alarmEnabled = doc["alarmEnabled"].as<unsigned>();
     if (doc["snooze"].is<unsigned>())
-      cfg.snooze = doc["snooze"].as<unsigned>();
+      cfg.alarmSnoozeMinutes = doc["snooze"].as<unsigned>();
     if (doc["albumInterval"].is<unsigned>())
-      cfg.albumInterval = doc["albumInterval"].as<unsigned>();
+      cfg.photoIntervalSeconds = doc["albumInterval"].as<unsigned>();
     if (doc["language"].is<const char *>())
-      cfg.language = doc["language"].as<String>();
+      cfg.displayLanguage = doc["language"].as<String>();
     if (doc["clockColor"].is<const char *>())
-      cfg.clockColor = doc["clockColor"].as<String>();
-    if (doc["nasBackground"].is<const char *>())
-      cfg.nasBackground = doc["nasBackground"].as<String>();
+      cfg.clockHourColor = doc["clockColor"].as<String>();
+    cfg.monitorCardBackground = doc["cardBackground"] | "#103040";
     if (doc["minuteColor"].is<const char *>())
-      cfg.minuteColor = doc["minuteColor"].as<String>();
+      cfg.clockMinuteColor = doc["minuteColor"].as<String>();
     if (doc["adminLanguage"].is<const char *>())
       cfg.adminLanguage = doc["adminLanguage"].as<String>();
     if (doc["albumFixed"].is<unsigned>())
-      cfg.albumFixed = doc["albumFixed"].as<unsigned>();
+      cfg.photoFixedMode = doc["albumFixed"].as<unsigned>();
     if (doc["showSeconds"].is<unsigned>())
-      cfg.showSeconds = doc["showSeconds"].as<unsigned>();
+      cfg.clockSecondsEnabled = doc["showSeconds"].as<unsigned>();
     if (doc["alarmDays"].is<unsigned>())
-      cfg.alarmDays = doc["alarmDays"].as<unsigned>();
+      cfg.alarmWeekdayMask = doc["alarmDays"].as<unsigned>();
     if (doc["alarmTune"].is<unsigned>())
-      cfg.alarmTune = doc["alarmTune"].as<unsigned>();
+      cfg.alarmMelody = doc["alarmTune"].as<unsigned>();
     if (doc["home"].is<unsigned>())
-      cfg.home = doc["home"].as<unsigned>();
-    if (doc["port"].is<unsigned>())
-      cfg.port = doc["port"].as<unsigned>();
-    if (doc["interval"].is<unsigned>())
-      cfg.interval = doc["interval"].as<unsigned>();
+      cfg.startupPage = doc["home"].as<unsigned>();
     if (doc["brightness"].is<unsigned>())
-      cfg.brightness = doc["brightness"].as<unsigned>();
+      cfg.displayBrightnessPercent = doc["brightness"].as<unsigned>();
   }
+  if (validDocument) readMachines(doc);
+  else captureMachine();
   f.close();
-  if (!cfg.admin.length())
-    cfg.admin = "12345678";
+  if (!cfg.adminPasswordVerifier.length())
+    cfg.adminPasswordVerifier = "12345678";
   if (cfg.snmpVersion != "3")
     cfg.snmpVersion = "2c";
-  if (cfg.snmpAuth != "SHA") cfg.snmpAuth = "MD5";
-  if (cfg.snmpPrivacy != "DES" && cfg.snmpPrivacy != "AES")
-    cfg.snmpPrivacy = "none";
-  cfg.port = constrain(cfg.port, 1u, 65535u);
+  if (cfg.snmpAuthProtocol != "SHA") cfg.snmpAuthProtocol = "MD5";
+  if (cfg.snmpPrivacyProtocol != "DES" && cfg.snmpPrivacyProtocol != "AES")
+    cfg.snmpPrivacyProtocol = "none";
+  cfg.snmpPort = constrain(cfg.snmpPort, 1u, 65535u);
   cfg.weatherEnabled = !!cfg.weatherEnabled;
-  cfg.weatherInterval = constrain(cfg.weatherInterval, 5u, 60u);
-  cfg.rotation = constrain(cfg.rotation, 0u, 3u);
-  if (cfg.cityCode.length() != 9)
-    cfg.cityCode = "101030100";
-  if (!cfg.ntpServer.length())
-    cfg.ntpServer = "ntp.aliyun.com";
-  cfg.sound = !!cfg.sound;
+  cfg.weatherRefreshMinutes = constrain(cfg.weatherRefreshMinutes, 10u, 120u);
+  cfg.displayRotation = constrain(cfg.displayRotation, 0u, 3u);
+  if (cfg.weatherCityCode.length() != 9)
+    cfg.weatherCityCode = "101030100";
+  if (!cfg.timeServer.length())
+    cfg.timeServer = "ntp.aliyun.com";
+  cfg.touchSoundEnabled = !!cfg.touchSoundEnabled;
   cfg.alarmEnabled = !!cfg.alarmEnabled;
-  cfg.snooze = constrain(cfg.snooze, 1u, 30u);
-  cfg.albumInterval = constrain(cfg.albumInterval, 3u, 300u);
-  cfg.home = constrain(cfg.home, 0u, 9u);
-  if (cfg.home == 3)
-    cfg.home = 6;
-  if (cfg.home == 5 && !cfg.weatherEnabled)
-    cfg.home = 6;
-  cfg.interval = constrain(cfg.interval, 3u, 60u);
-  cfg.brightness = constrain(cfg.brightness, 5u, 100u);
-  if (cfg.language != "en")
-    cfg.language = "zh";
+  cfg.alarmSnoozeMinutes = constrain(cfg.alarmSnoozeMinutes, 1u, 30u);
+  cfg.photoIntervalSeconds = constrain(cfg.photoIntervalSeconds, 3u, 300u);
+  cfg.startupPage = constrain(cfg.startupPage, 0u, 9u);
+  if (cfg.startupPage == 3)
+    cfg.startupPage = 6;
+  if (cfg.startupPage == 5 && !cfg.weatherEnabled)
+    cfg.startupPage = 6;
+  cfg.snmpPollIntervalSeconds = constrain(cfg.snmpPollIntervalSeconds, 3u, 60u);
+  cfg.displayBrightnessPercent = constrain(cfg.displayBrightnessPercent, 5u, 100u);
+  if (cfg.displayLanguage != "en")
+    cfg.displayLanguage = "zh";
   if (cfg.adminLanguage != "en")
     cfg.adminLanguage = "zh";
-  if (!colorOK(cfg.clockColor))
-    cfg.clockColor = "#ffffff";
-  if (!colorOK(cfg.minuteColor))
-    cfg.minuteColor = "#ffa500";
-  if (!colorOK(cfg.nasBackground))
-    cfg.nasBackground = "#21455c";
-  cfg.alarmDays = constrain(cfg.alarmDays, 1u, 127u);
-  cfg.alarmTune = constrain(cfg.alarmTune, 0u, 3u);
-  cfg.albumFixed = !!cfg.albumFixed;
-  cfg.showSeconds = !!cfg.showSeconds;
+  if (!colorOK(cfg.clockHourColor))
+    cfg.clockHourColor = "#ffffff";
+  if (!colorOK(cfg.clockMinuteColor))
+    cfg.clockMinuteColor = "#ffa500";
+  if (!colorOK(cfg.monitorCardBackground)) cfg.monitorCardBackground = "#103040";
+  if (!colorOK(cfg.monitorBackground))
+    cfg.monitorBackground = "#21455c";
+  cfg.alarmWeekdayMask = constrain(cfg.alarmWeekdayMask, 1u, 127u);
+  cfg.alarmMelody = constrain(cfg.alarmMelody, 0u, 3u);
+  cfg.photoFixedMode = !!cfg.photoFixedMode;
+  cfg.clockSecondsEnabled = !!cfg.clockSecondsEnabled;
   // Normalize in RAM; only explicit saves should write configuration to flash.
 }

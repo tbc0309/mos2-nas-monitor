@@ -6,6 +6,7 @@ import argparse, copy, json, math, subprocess, sys, threading, time, re, os
 from datetime import datetime, timezone, timedelta
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
+import urllib.request, urllib.error
 import ipaddress, secrets, io
 from http.cookies import SimpleCookie
 import html
@@ -17,8 +18,14 @@ ROOT = (
     else Path(__file__).resolve().parents[1]
 )
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "simulator"))
+from security import LoginGuard, local_request
+from credentials import password_valid, default_password
+from configuration import read_config, write_atomic, normalize_config
+from snmp_profiles import Profile, profiles
+CITY_CODES = {row[2] for row in json.loads((ROOT / "web/weather-cities.js").read_text(encoding="utf8").split("=",1)[1].strip().rstrip(";"))}
 from snmp_probe import query as snmp_query
-from snmp_v3 import Credentials, query as snmp_v3_query
+from snmp_v3 import Credentials, query as snmp_v3_query, clear_sessions
 
 # FIFO send budget prevents a long table walk from repeatedly reacquiring a
 # semaphore ahead of another collector. Only reply waiting occupies a slot.
@@ -29,6 +36,7 @@ _snmp_ticket = 0
 _snmp_serving = 0
 _snmp_failures = 0
 _snmp_cooldown = 0.0
+collecting = False
 
 
 def query(host, port, community, name, next_oid=False):
@@ -37,7 +45,14 @@ def query(host, port, community, name, next_oid=False):
         ticket = _snmp_ticket
         _snmp_ticket += 1
         while True:
-            wait = max(0.5 - (time.monotonic() - _snmp_sent_at), _snmp_cooldown - time.monotonic())
+            if ticket == _snmp_serving and collecting and (host, port, community) != target_key(config):
+                _snmp_serving += 1
+                _snmp_condition.notify_all()
+                raise OSError("Collector target changed")
+            wait = max(
+                0.5 - (time.monotonic() - _snmp_sent_at),
+                _snmp_cooldown - time.monotonic(),
+            )
             if ticket == _snmp_serving and _snmp_active < 1 and wait <= 0:
                 _snmp_active += 1
                 _snmp_serving += 1
@@ -46,6 +61,8 @@ def query(host, port, community, name, next_oid=False):
                 break
             _snmp_condition.wait(max(0.001, min(0.075, wait)) if wait > 0 else 0.075)
     try:
+        if collecting and (host, port, community) != target_key(config):
+            raise OSError("Collector target changed")
         if isinstance(community, Credentials):
             result = snmp_v3_query(host, port, community, name, next_oid, timeout=4)
         else:
@@ -56,17 +73,24 @@ def query(host, port, community, name, next_oid=False):
         return result
     except TimeoutError:
         with _snmp_condition:
-            _snmp_failures += 1
-            if _snmp_failures >= 3:
-                _snmp_cooldown = time.monotonic() + 60
+            if not collecting or (host, port, community) == target_key(config):
+                _snmp_failures += 1
+                if _snmp_failures >= 3:
+                    _snmp_cooldown = time.monotonic() + 60
         raise
     finally:
         with _snmp_condition:
+            # Start spacing after transport completion: thread scheduling or
+            # first-session key derivation must not compress actual send gaps.
+            _snmp_sent_at = time.monotonic()
             _snmp_active -= 1
             _snmp_condition.notify_all()
 
 
 config = dict(
+    machines=[],
+    activeMachine=0,
+    machineName="",
     nas="192.168.1.100",
     community="public",
     snmpVersion="2c",
@@ -78,6 +102,7 @@ config = dict(
     port=161,
     mode="snmp",
     nasBackground="#21455c",
+    cardBackground="#103040",
     language="zh",
     adminLanguage="zh",
     clockColor="#ffffff",
@@ -86,14 +111,14 @@ config = dict(
     showSeconds=1,
     alarmDays=31,
     alarmTune=0,
-    sound=0,
+    sound=1,
     alarmEnabled=0,
     alarmTime="07:00",
     snooze=5,
     albumInterval=10,
     weatherEnabled=1,
     cityCode="101030100",
-    weatherInterval=10,
+    weatherInterval=20,
     rotation=0,
     ntpServer="ntp.aliyun.com",
     storage="",
@@ -102,7 +127,7 @@ config = dict(
     brightness=70,
     home=6,
     ssid="",
-    **{"pass": "", "admin": "12345678"},
+    **{"pass": "", "admin": "12345678", "adminDefault": True},
 )
 state = dict(
     cpu=-1,
@@ -143,8 +168,8 @@ reset_nonce_at = 0
 lock = threading.Lock()
 token = secrets.token_hex(16)
 sessions = {}
+login_guard = LoginGuard()
 revision = 0
-previous = None
 last_ok = 0
 weather = dict(
     enabled=True,
@@ -173,28 +198,243 @@ album_dir.mkdir(parents=True, exist_ok=True)
 config_path = None
 
 
+MACHINE_FIELDS = (
+    "cardBackground",
+    "nasBackground",
+    "nas",
+    "community",
+    "snmpVersion",
+    "snmpUser",
+    "snmpPassword",
+    "snmpAuth",
+    "snmpPrivacy",
+    "snmpPrivacyPassword",
+    "port",
+    "iface",
+    "storage",
+    "interval",
+)
+
+
+weather_validation = dict(code="", status="idle", completed=0)
+
+def weather_code_ready(code):
+    return code in CITY_CODES or code == config["cityCode"] or (
+        code == weather_validation["code"] and weather_validation["status"] == "valid"
+        and time.monotonic()-weather_validation["completed"] < 600)
+
+def probe_weather_code(code):
+    status = "unavailable"
+    try:
+        req=urllib.request.Request(f"http://d1.weather.com.cn/weather_index/{code}.html",
+              headers={"Referer":"http://www.weather.com.cn/", "User-Agent":"Mozilla/5.0"})
+        text=urllib.request.urlopen(req,timeout=8).read(65536).decode("utf8")
+        match=re.search(r"var dataSK\s*=\s*(\{.*?\})\s*;",text)
+        if match:
+            data=json.loads(match[1]); t=float(data["temp"])
+            status="valid" if data.get("city")==code and data.get("cityname") and data.get("weather") and math.isfinite(t) and -80<=t<=65 else "invalid"
+        elif re.search(r"var fc\s*=",text): status="forecast"
+        else: status="invalid"
+    except urllib.error.HTTPError as error:
+        status="invalid" if error.code==404 else "unavailable"
+    except (OSError,ValueError,KeyError,TypeError): pass
+    with lock:
+        if weather_validation["code"]==code:
+            weather_validation.update(status=status,completed=time.monotonic())
+
+def weather_english(code):
+    mapping = {0:"Sunny",1:"Cloudy",2:"Overcast",3:"Showers",4:"Thunderstorms",5:"Thunderstorms with hail",6:"Sleet",7:"Light rain",8:"Rain",9:"Heavy rain",13:"Snow showers",14:"Light snow",15:"Snow",16:"Heavy snow",17:"Blizzard",18:"Fog",19:"Freezing rain",20:"Sandstorm",29:"Dust",30:"Blowing sand",31:"Sandstorm",32:"Dense fog",49:"Dense fog",301:"Rain",302:"Snow"}
+    if 10 <= code <= 12: return "Rainstorm"
+    if 21 <= code <= 25: return "Rain"
+    if 26 <= code <= 28: return "Snow"
+    if 53 <= code <= 56: return "Haze"
+    return mapping.get(code,"Weather")
+
+
+def capture_machine():
+    if not config["machines"]:
+        config["machines"] = [{}]
+        config["activeMachine"] = 0
+    config["machines"][config["activeMachine"]] = {
+        **{k: config[k] for k in MACHINE_FIELDS},
+        "name": config["machineName"],
+    }
+
+
+selection_save_at = 0.0
+
+
+def select_machine(index, persist=True):
+    global ui_mode, revision, selection_save_at
+    capture_machine()
+    config["activeMachine"] = index
+    m = config["machines"][index]
+    config.update({k: m[k] for k in MACHINE_FIELDS})
+    config["machineName"] = m["name"]
+    if persist:
+        persist_config()  # Management edits remain transactional.
+        selection_save_at = 0.0
+    else:
+        selection_save_at = time.monotonic() + 5.0
+    clear_telemetry()
+    # Desktop pages enter overview; existing monitor pages retain their position.
+    if state["page"] not in (0, 1, 2, 4, 8, 9):
+        state["page"] = 0
+    # Preserve the current page when changing devices.
+    state["machineNotice"] = m["name"] or m["nas"]
+    state["machineNoticeUntil"] = time.monotonic() + 1.8
+    ui_mode = ""
+    revision += 1
+
+
+def machine_action(form):
+    """Apply a profile change atomically; caller holds the application lock."""
+    before = copy.deepcopy(config)
+    try:
+        capture_machine()
+        action = form.get("action")
+        if action == "add":
+            if len(config["machines"]) >= 6:
+                raise ValueError("Profile limit")
+            config["machines"].append(
+                {
+                    **{k: copy.deepcopy(defaults[k]) for k in MACHINE_FIELDS},
+                    "name": "",
+                }
+            )
+            index = len(config["machines"]) - 1
+        elif action == "move":
+            if not re.fullmatch(r"[0-5]:[0-5]", form.get("index", "")):
+                raise ValueError("Order")
+            try:
+                source, destination = map(int, form.get("index", "").split(":"))
+            except ValueError:
+                raise ValueError("Order")
+            machines = config["machines"]
+            if not (
+                0 <= source < len(machines)
+                and 0 <= destination < len(machines)
+                and abs(source - destination) == 1
+            ):
+                raise ValueError("Order")
+            machines[source], machines[destination] = (
+                machines[destination],
+                machines[source],
+            )
+            active = config["activeMachine"]
+            config["activeMachine"] = (
+                destination
+                if active == source
+                else source if active == destination else active
+            )
+            persist_config()
+            return config["activeMachine"]
+        elif action == "delete":
+            machines = config["machines"]
+            if len(machines) <= 1:
+                raise ValueError("Keep one device")
+            removed = int(form.get("index", config["activeMachine"]))
+            if not 0 <= removed < len(machines): raise ValueError("Index")
+            active = config["activeMachine"]
+            machines.pop(removed)
+            config["activeMachine"] = 0 if active == removed else active - (active > removed)
+            current = machines[config["activeMachine"]]
+            config.update({k: current[k] for k in MACHINE_FIELDS})
+            config["machineName"] = current["name"]
+            persist_config()
+            if removed == active: clear_telemetry()
+            return config["activeMachine"]
+        elif action == "activate":
+            index = (config["activeMachine"] + 1) % len(config["machines"])
+            select_machine(index, persist=False)
+            return index
+        elif action == "select":
+            value = form.get("index", "")
+            if not re.fullmatch(r"[0-5]", value) or int(value) >= len(
+                config["machines"]
+            ):
+                raise ValueError("Index")
+            index = int(value)
+            return index
+        else:
+            raise ValueError("Action")
+        persist_config()
+        return index
+    except Exception:
+        config.clear()
+        config.update(before)
+        raise
+
+
+def clear_telemetry():
+    """Invalidate target-owned data synchronously, before HTTP returns to the UI."""
+    global last_ok, collection_target, reset_nonce, _snmp_failures, _snmp_cooldown
+    with _snmp_condition:
+        _snmp_failures = 0
+        _snmp_cooldown = 0.0
+        _snmp_condition.notify_all()
+    profiles.clear()
+    last_ok = 0
+    reset_nonce = ""
+    collection_target = target_key(config)
+    collection_stamps.clear()
+    collection_diagnostics.clear()
+    table_stamps.clear()
+    interface_cache.clear()
+    interface_scan.clear()
+    profiles.clear()
+    clear_sessions()
+    disks.clear()
+    volumes.clear()
+    state.update(
+        cpu=-1,
+        memory=-1,
+        temperature=-1,
+        rx=-1,
+        tx=-1,
+        model="",
+        history=[],
+        uptime=0,
+        storage=-1,
+        online=False,
+        interface="",
+        interfaces=[],
+        memoryTotal=0,
+        memoryAvail=0,
+        volumeTotal=0,
+        volumeUsed=0,
+        volume="",
+        diskGroup=0,
+        volumeGroup=0,
+    )
+
+
 def persist_config():
     if config_path is None:
         return
-    temporary = config_path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(config, ensure_ascii=False, indent=2), encoding="utf8"
-    )
-    temporary.replace(config_path)
+    write_atomic(config_path, config)
 
 
 def load_config(path):
     global config_path
     config_path = Path(path)
     if config_path.is_file():
-        saved = json.loads(config_path.read_text(encoding="utf8"))
-        config.update({key: saved[key] for key in defaults if key in saved})
+        try:
+            saved = read_config(config_path)
+            config.update(normalize_config(saved, defaults, MACHINE_FIELDS))
+        except (ValueError, OSError):
+            print("Invalid configuration file preserved; using defaults.", file=sys.stderr)
+            config.clear(); config.update(copy.deepcopy(defaults))
+    config_path.with_suffix(".tmp").unlink(missing_ok=True)
+    (album_dir / "incoming.jpg").unlink(missing_ok=True)
+    capture_machine()
     state["page"] = config["home"]
 
 
 alarm = dict(enabled=0, time="07:00", state=0, remaining=0)
 alarm_due = 0
 alarm_start = 0
+alarm_snooze_used = False
 alarm_day = ""
 alarm_taps = 0
 alarm_tap_at = 0
@@ -212,8 +452,7 @@ def erase_album():
     alarm_manual = False
     album_position = 0
     alarm.update(enabled=0, state=0, remaining=0, time="07:00")
-    disks.clear()
-    volumes.clear()
+    clear_telemetry()
     state.update(
         online=False,
         cpu=-1,
@@ -225,7 +464,6 @@ def erase_album():
         diskGroup=0,
         volumeGroup=0,
     )
-    persist_config()
     for p in album_dir.glob("photo-*"):
         if p.is_file():
             p.unlink()
@@ -253,7 +491,7 @@ def next_page():
 
 
 def alarm_tap():
-    global alarm_due, alarm_taps, alarm_tap_at, alarm_manual
+    global alarm_due, alarm_taps, alarm_tap_at, alarm_manual, alarm_snooze_used
     now = time.monotonic()
     alarm_taps = alarm_taps + 1 if now - alarm_tap_at <= 0.8 else 1
     alarm_tap_at = now
@@ -261,14 +499,18 @@ def alarm_tap():
         alarm.update(state=3, remaining=0)
         alarm_manual = False
         alarm_taps = 0
+    elif alarm["state"] == 1 and alarm_snooze_used:
+        alarm.update(state=3, remaining=0)
+        alarm_manual = False
     elif alarm["state"] == 1:
+        alarm_snooze_used = True
         alarm["state"] = 2
         alarm_due = time.time() + config["snooze"] * 60
         alarm["remaining"] = config["snooze"] * 60
 
 
 def alarm_poll():
-    global alarm_due, alarm_day, alarm_start, alarm_taps
+    global alarm_due, alarm_day, alarm_start, alarm_taps, alarm_snooze_used, alarm_manual
     while True:
         with lock:
             dt = datetime.now(timezone(timedelta(hours=8)))
@@ -285,15 +527,16 @@ def alarm_poll():
                 alarm_day = dt.strftime("%Y%m%d")
                 alarm.update(state=1)
                 alarm_start = now
+                alarm_snooze_used = False
                 state["page"] = 6
                 alarm_taps = 0
             if alarm["state"] == 2 and now >= alarm_due:
                 alarm["state"] = 1
                 alarm_start = now
                 alarm_taps = 0
-            if alarm["state"] == 1 and now - alarm_start >= 60:
-                alarm["state"] = 2
-                alarm_due = now + config["snooze"] * 60
+            if alarm["state"] == 1 and now - alarm_start >= 300:
+                alarm["state"] = 3
+                alarm_manual = False
             alarm["remaining"] = (
                 max(0, int(alarm_due - now)) if alarm["state"] == 2 else 0
             )
@@ -301,13 +544,19 @@ def alarm_poll():
 
 
 table_stamps = {}
+storage_discovery_generation = 0
+storage_discovery_requested_at = 0.0
 
 
 def table_poll(kind):
     global disks, volumes
     seen, metadata_at, due = None, 0, 0
+    discovery_generation = storage_discovery_generation
     scan_cursor, scan_found = None, []
     while True:
+        if not activity_allowed("snmp"):
+            time.sleep(0.2)
+            continue
         with lock:
             cfg = copy.deepcopy(config)
             rows = copy.deepcopy(disks if kind == "disk" else volumes)
@@ -316,21 +565,66 @@ def table_poll(kind):
         if seen != key:
             seen, metadata_at, due, rows = key, 0, 0, []
             scan_cursor, scan_found = None, []
+        if discovery_generation != storage_discovery_generation:
+            discovery_generation = storage_discovery_generation
+            metadata_at = due = 0
+            scan_cursor, scan_found = None, []
         if now < due or not startup_ready(cfg, kind):
-            time.sleep(0.1)
-            continue
-
-        if kind == "disk" and not rows and state["page"] != 8 and not any(
-            v.get("valid") for v in volumes
-        ) and now - _startup_at < 120:
             time.sleep(0.1)
             continue
 
         def sn(oid, next_oid=False):
             return query(*target_key(cfg), oid, next_oid)
 
+        if kind == "disk" and not profiles.get(key, Profile()).synology_confirmed:
+            # Generic inventory is separate from SMART; never invent health.
+            found = []
+            try:
+                for root, generic in (("1.3.6.1.2.1.25.3.6.1.2", True), ("1.3.6.1.4.1.2021.13.15.1.1.2", False)):
+                    cursor = root
+                    for _ in range(64):
+                        try:
+                            oid, value = sn(cursor, True)
+                        except ValueError:
+                            break
+                        if not oid.startswith(root + ".") or len(found) >= 12:
+                            break
+                        cursor = oid
+                        if not generic and not re.fullmatch(r"(?:sd|hd|vd|xvd)[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+|sata[0-9]+", str(value)):
+                            continue
+                        index = oid.rsplit(".", 1)[1]
+                        row = dict(index=index, name=str(value) if not generic else "Disk " + index,
+                                   model="--", status=-1, health=-1, temperature=-1)
+                        if generic:
+                            try:
+                                desc = sn("1.3.6.1.2.1.25.3.2.1.3." + index)[1]
+                                row["model"] = str(desc)[:64]
+                                match = re.search(r"/dev/([^ )]+)", str(desc))
+                                if match: row["name"] = match.group(1)
+                                if (match and not re.fullmatch(r"(?:sd|hd|vd|xvd)[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+|sata[0-9]+", row["name"])) or str(desc).startswith(("RAID ", "LVM ")):
+                                    continue
+                            except ValueError: pass
+                            try:
+                                size = sn("1.3.6.1.2.1.25.3.6.1.4." + index)[1]
+                                if isinstance(size, int) and size > 0: row["model"] = f"{size / 1048576:.1f} GiB"
+                            except ValueError: pass
+                        found.append(row)
+                    if found: break
+                with lock:
+                    if target_key(config) == key: disks = copy.deepcopy(found)
+                metadata_at = time.monotonic()
+                due = metadata_at + 7200
+            except OSError:
+                due = time.monotonic() + 120
+            continue
+
         ok = True
-        if scan_cursor is not None or not rows or not metadata_at or now - metadata_at >= 7200:
+        if (
+            scan_cursor is not None
+            or not rows
+            or not metadata_at
+            or now - metadata_at >= 7200
+        ):
             try:
                 root = (
                     "1.3.6.1.4.1.6574.2.1.1.2"
@@ -348,11 +642,50 @@ def table_poll(kind):
                     oid, name = sn(cursor, True)
                     if not oid.startswith(root + "."):
                         break
-                    if kind == "volume" and not re.fullmatch(
-                        r"/volume[0-9]+", str(name)
-                    ):
-                        cursor = oid
-                        continue
+                    if kind == "volume":
+                        if (
+                            ("/@" in str(name) and not re.search(r"/@usb(?:/|$)",str(name)))
+                            or str(name).startswith(
+                                ("/var/lib/docker", "/var/lib/containers")
+                            )
+                            or (
+                                name == "/"
+                                and profiles.get(key, Profile()).synology_confirmed
+                            )
+                            or re.match(
+                                r"^/(?:dev|proc|sys|boot|rom|snap)(?:/|$)|^/run(?:$|/(?!media/))|^/tmp(?:$|/(?!mnt/))",
+                                str(name),
+                            )
+                        ):
+                            cursor = oid
+                            continue
+                        if name == "/" and any(
+                            v.get("name") == "/overlay" for v in found
+                        ):
+                            cursor = oid
+                            continue
+                        if profiles.get(key, Profile()).synology_confirmed and not re.fullmatch(r'/volume[0-9]+|/volumeUSB[0-9]+(?:/usbshare[^/]*)?',str(name)):
+                            cursor = oid
+                            continue
+                        try:
+                            storage_type = sn(
+                                "1.3.6.1.2.1.25.2.3.1.2." + oid.rsplit(".", 1)[1]
+                            )[1]
+                            accepted = storage_type in (
+                                "1.3.6.1.2.1.25.2.1.4",
+                                "1.3.6.1.2.1.25.2.1.5",
+                                "1.3.6.1.2.1.25.2.1.9",
+                            )
+                        except ValueError:
+                            accepted = bool(
+                                re.fullmatch(
+                                    r"(?:/volume[0-9]+|/volumeUSB[0-9]+(?:/.*)?|/vol(?!ume)[^/]*(?:/.*)?|/www[^/]*(?:/.*)?|/(?:mnt|media|run/media|tmp/mnt)/.+|/)",
+                                    str(name),
+                                )
+                            )
+                        if not accepted:
+                            cursor = oid
+                            continue
                     index = oid.rsplit(".", 1)[1]
                     row = next(
                         (copy.deepcopy(r) for r in rows if r["index"] == index),
@@ -366,7 +699,7 @@ def table_poll(kind):
                     else:
                         units = sn("1.3.6.1.2.1.25.2.3.1.4." + index)[1]
                         size = sn("1.3.6.1.2.1.25.2.3.1.5." + index)[1]
-                        if units <= 0 or size <= 0:
+                        if not isinstance(units,int) or not isinstance(size,int) or units <= 0 or size <= 0 or size > (2**64-1)//units:
                             raise ValueError("Invalid volume capacity")
                         row.update(units=units, total=units * size)
                         used = sn("1.3.6.1.2.1.25.2.3.1.6." + index)[1]
@@ -395,8 +728,10 @@ def table_poll(kind):
                 rows, metadata_at = found, time.monotonic()
                 with lock:
                     if target_key(config) == key:
-                        if kind == "disk": disks = copy.deepcopy(rows)
-                        else: volumes = copy.deepcopy(rows)
+                        if kind == "disk":
+                            disks = copy.deepcopy(rows)
+                        else:
+                            volumes = copy.deepcopy(rows)
                 scan_cursor, scan_found = None, []
             except (OSError, ValueError, KeyError, TypeError) as error:
                 ok = False
@@ -415,9 +750,17 @@ def table_poll(kind):
                 else (("used", 6),)
             )
             for field, column in fields:
-                if kind == "volume" and table_stamps.get((kind, row["index"], field), -math.inf) >= now:
+                if (
+                    kind == "volume"
+                    and table_stamps.get((kind, row["index"], field), -math.inf) >= now
+                ):
                     continue  # Already acquired while discovering this row.
-                if kind == "disk" and field != "temperature" and now - table_stamps.get((kind, row["index"], field), -math.inf) < 3600:
+                if (
+                    kind == "disk"
+                    and field != "temperature"
+                    and now - table_stamps.get((kind, row["index"], field), -math.inf)
+                    < 3600
+                ):
                     continue
                 try:
                     root = (
@@ -428,6 +771,8 @@ def table_poll(kind):
                     value = sn(root + "." + str(column) + "." + row["index"])[1]
                     if not isinstance(value, int) or value < 0:
                         raise ValueError("Invalid counter")
+                    if kind == "disk" and (value > (150 if field == "temperature" else 0x7fffffff) or (field != "temperature" and value == 0)):
+                        raise ValueError("Invalid disk measurement")
                     if kind == "volume":
                         value *= row["units"]
                         if value > row["total"]:
@@ -447,7 +792,9 @@ def table_poll(kind):
                             volumes = copy.deepcopy(rows)
                         expire_tables(time.monotonic())
         due = time.monotonic() + (
-            (300 if kind == "disk" else 7200) if ok else (15 if not metadata_at else 120)
+            (300 if kind == "disk" and rows else 7200)
+            if ok
+            else (15 if not metadata_at else 120)
         )
 
 
@@ -457,10 +804,9 @@ def expire_tables(now):
             for field in (
                 ("status", "temperature", "health") if kind == "disk" else ("used",)
             ):
-                if (
-                    now - table_stamps.get((kind, row.get("index"), field), -math.inf)
-                    > (900 if kind == "disk" and field == "temperature" else ttl)
-                ):
+                if now - table_stamps.get(
+                    (kind, row.get("index"), field), -math.inf
+                ) > (900 if kind == "disk" and field == "temperature" else ttl):
                     row[field] = -1 if kind == "disk" else None
                     if kind == "volume":
                         row["valid"] = False
@@ -471,22 +817,28 @@ def extra_poll():
         threading.Thread(target=table_poll, args=(kind,), daemon=True).start()
 
 
+def weather_retry(failures):
+    return (60, 60, 300, 600, 1200, 1800)[min(max(failures,0),5)]
+
+
 def weather_poll():
     global weather_at
     seen = -1
     attempt = 0
+    failures = 0
     while True:
         with lock:
             cfg = copy.deepcopy(config)
             rev = (cfg["cityCode"], cfg["weatherEnabled"])
             error = weather["error"]
             if seen != -1 and seen != rev:
+                failures = 0
                 weather.update(valid=False, city="", condition="")
                 weather_at = 0
         now = time.monotonic()
-        if cfg["weatherEnabled"] and (
+        if activity_allowed("weather") and cfg["weatherEnabled"] and (
             rev != seen
-            or now - attempt >= (60 if error else cfg["weatherInterval"] * 60)
+            or now - attempt >= (weather_retry(failures) if error else cfg["weatherInterval"] * 60)
         ):
             attempt = now
             seen = rev
@@ -508,9 +860,13 @@ def weather_poll():
                     raise ValueError("Missing dataSK")
                 data = json.loads(match[1])
                 t = float(data["temp"])
-                h = float(data["SD"].replace("%", ""))
+                h = -1
+                try:
+                    candidate = float(str(data.get("SD", "")).replace("%", ""))
+                    if math.isfinite(candidate) and 0 <= candidate <= 100: h = candidate
+                except (ValueError, TypeError): pass
                 if data["city"] != cfg["cityCode"] or not (
-                    -80 <= t <= 65 and 0 <= h <= 100
+                    -80 <= t <= 65
                 ):
                     raise ValueError("Invalid city or values")
                 update = dict(
@@ -523,30 +879,43 @@ def weather_poll():
                     observed=data["time"],
                     error="",
                     cityEnglish=data["nameen"],
-                    conditionEnglish=data["weathere"],
+                    conditionEnglish=data.get("weathere") or weather_english(int(re.sub(r"^[dn]", "", data.get("weathercode", "-1")))),
                     windEnglish=data["wde"] + " " + data["wse"],
                     wind=data["WD"] + " " + data["WS"],
                     code=int(data["weathercode"][1:]),
                 )
                 with lock:
                     if rev == (config["cityCode"], config["weatherEnabled"]):
+                        if weather.get("cityEnglish") != update["cityEnglish"]:
+                            weather["scrollStarted"] = time.monotonic()
                         weather.update(update)
                         weather_at = time.monotonic()
+                        failures = 0
             except (OSError, ValueError, KeyError, TypeError) as e:
                 with lock:
                     if rev == (config["cityCode"], config["weatherEnabled"]):
                         weather["error"] = str(e)
+                        failures = min(failures+1,5)
         time.sleep(0.25)
 
 
-cpu_previous = None
 
 
 interface_cache = {}
 interface_scan = {}
 
 
-STARTUP_GROUPS = ("cpu", "memory", "network", "temperature", "uptime", "identity", "disk", "volume", "interfaces")
+STARTUP_GROUPS = (
+    "cpu",
+    "memory",
+    "network",
+    "temperature",
+    "uptime",
+    "identity",
+    "disk",
+    "volume",
+    "interfaces",
+)
 _startup_lock = threading.Lock()
 _startup_key, _startup_page, _startup_due = None, None, {}
 _storage_released, _startup_at = False, 0.0
@@ -555,17 +924,38 @@ _storage_released, _startup_at = False, 0.0
 def startup_delays(page):
     if page in (5, 6, 7):
         return dict(zip(STARTUP_GROUPS, (20, 21, 23, 22, 25, 30, 35, 40, 22)))
-    delay = dict(zip(STARTUP_GROUPS, (30, 31, 32, 33, 45, 60, 65, 70, 30)))
-    primary = {0: ("cpu", "memory", "network", "temperature", "interfaces"),
-               1: ("network", "interfaces"), 2: ("cpu", "memory"),
-               4: ("uptime", "identity", "interfaces"), 8: ("disk",), 9: ("volume",)}
+    delay = dict(zip(STARTUP_GROUPS, (30, 31, 32, 33, 45, 0, 65, 70, 30)))
+    primary = {
+        0: ("cpu", "memory", "network", "temperature", "interfaces"),
+        1: ("network", "interfaces"),
+        2: ("cpu", "memory"),
+        4: ("uptime", "identity", "interfaces"),
+        8: ("disk",),
+        9: ("volume",),
+    }
     for group in primary.get(page, ()):
         delay[group] = 0
     return delay
 
 
+_activity_page = -1
+_activity_entered = 0.0
+_management_demand = -1e9
+
+def activity_allowed(kind, now=None):
+    """Pause invisible collectors after grace without discarding their snapshots."""
+    global _activity_page, _activity_entered
+    now = time.monotonic() if now is None else now
+    page = state["page"]
+    if page != _activity_page:
+        _activity_page, _activity_entered = page, now
+    if kind == "weather":
+        return page == 5 or now - _activity_entered < 300
+    return page not in (5, 6, 7) or now - _activity_entered < 300 or now - _management_demand < 10
+
 def startup_ready(cfg, group):
     global _startup_key, _startup_page, _startup_due, _storage_released, _startup_at
+    if not activity_allowed("snmp"): return False
     now, page = time.monotonic(), state["page"]
     key = target_key(cfg)
     with _startup_lock:
@@ -580,7 +970,9 @@ def startup_ready(cfg, group):
         if group in ("disk", "volume"):
             # Stamps record successful coherent publication, independent of expiry.
             ready = collection_target == key and all(
-                g in collection_stamps for g in ("cpu", "memory", "network", "temperature")
+                g in collection_stamps
+                or getattr(profiles.get(key, Profile()), {"cpu":"cpu_mode","memory":"memory_mode","network":"network_mode","temperature":"temperature_mode"}[g]) == "unsupported"
+                for g in ("cpu", "memory", "network", "temperature")
             )
             _storage_released |= ready or page in (8, 9) or now - _startup_at >= 120
             return _storage_released
@@ -590,7 +982,11 @@ def startup_ready(cfg, group):
 def discover_interfaces(cfg):
     key = target_key(cfg)
     cached = interface_cache.get(key)
-    if cached and time.monotonic() - cached[0] < 300 and any(p["up"] for p in cached[1]):
+    if (
+        cached
+        and time.monotonic() - cached[0] < 300
+        and any(p["up"] for p in cached[1])
+    ):
         return cached[1]
     root = "1.3.6.1.2.1.2.2.1.2"
     cursor, entries = interface_scan.get(key, (root, []))
@@ -604,7 +1000,7 @@ def discover_interfaces(cfg):
         cursor = oid
         index = oid.rsplit(".", 1)[1]
         try:
-            if query(*key, "1.3.6.1.2.1.2.2.1.3." + index)[1] == 6:
+            if query(*key, "1.3.6.1.2.1.2.2.1.3." + index)[1] in (6,23,71,161,209):
                 entries.append(
                     dict(
                         index=index,
@@ -621,9 +1017,9 @@ def discover_interfaces(cfg):
             p for p in known if p["index"] not in {e["index"] for e in entries}
         ]
         interface_cache[key] = time.monotonic(), merged
-        if not any(p["up"] and p["name"].startswith(("eth", "en")) for p in known) and any(
-            p["up"] and p["name"].startswith(("eth", "en")) for p in entries
-        ):
+        if not any(
+            p["up"] and p["name"].startswith(("eth", "en")) for p in known
+        ) and any(p["up"] and p["name"].startswith(("eth", "en")) for p in entries):
             interface_scan[key] = cursor, copy.deepcopy(entries)
             return merged
         if len(entries) == 16:
@@ -635,7 +1031,8 @@ def discover_interfaces(cfg):
 
 
 def sample(cfg, group=None):
-    global previous, cpu_previous
+    if len(profiles) > 6:
+        profiles.clear()
     result = dict(
         cpu=-1,
         memory=-1,
@@ -662,58 +1059,42 @@ def sample(cfg, group=None):
             time.sleep(0.5)
             return query(*target_key(cfg), oid)[1]
 
-    if group is None or group == "temperature":
+    key = target_key(cfg)
+    profile = profiles.setdefault(key, Profile())
+    def read(oid, next_oid=False):
+        if oid == '1.3.6.1.4.1.6574.1.5.1.0' and not profile.synology_confirmed and state['page'] != 4:
+            # Only this metadata worker waits; the FIFO slot stays free for
+            # the first live snapshots. Match the firmware's ten-second bound.
+            while not all(g in collection_stamps for g in ('cpu','memory')) and time.monotonic()-_startup_at < 10:
+                if key != target_key(config): raise OSError('Collector target changed')
+                time.sleep(.1)
         try:
-            result["temperature"] = sn("1.3.6.1.4.1.6574.1.2.0")
-        except (OSError, ValueError):
-            pass
-    if group is None or group in ("uptime", "identity"):
-        for field, oid in (
-            ("model", "1.3.6.1.4.1.6574.1.5.1.0"),
-            ("uptime", "1.3.6.1.2.1.25.1.1.0"),
-        ):
-            if group is not None and field != (
-                "model" if group == "identity" else "uptime"
-            ):
-                continue
-            try:
-                value = sn(oid)
-                result[field] = value // 100 if field == "uptime" else value
-            except (OSError, ValueError):
-                pass
-    if group is None or group == "cpu":
+            return query(*key, oid, next_oid)
+        except TimeoutError:
+            time.sleep(0.5)
+            return query(*key, oid, next_oid)
+
+    for kind in ("identity", "uptime", "temperature", "cpu", "memory"):
+        if group is not None and group != kind:
+            continue
         try:
-            raw = [
-                sn("1.3.6.1.4.1.2021.11." + str(n) + ".0")
-                for n in (50, 51, 52, 53, 54, 56, 61, 64)
-            ]
-            key = target_key(cfg)
-            if cpu_previous and cpu_previous[0] == key:
-                delta = [(a - b) & 0xFFFFFFFF for a, b in zip(raw, cpu_previous[1])]
-                if sum(delta) and all(v <= 0x7FFFFFFF for v in delta):
-                    result["cpu"] = (
-                        100 * (sum(delta) - delta[3] - delta[4]) / sum(delta)
-                    )
-            cpu_previous = (key, raw)
-            result["_ok"] = True
-        except (OSError, ValueError, ZeroDivisionError):
-            pass
-    if group is None or group == "memory":
-        try:
-            total, avail = sn("1.3.6.1.4.1.2021.4.5.0"), sn("1.3.6.1.4.1.2021.4.6.0")
-            buffers, cache = sn("1.3.6.1.4.1.2021.4.14.0"), sn(
-                "1.3.6.1.4.1.2021.4.15.0"
-            )
-            if total <= 0 or avail < 0 or avail > total or buffers < 0 or cache < 0:
-                raise ValueError("Invalid memory snapshot")
-            available = min(total, avail + buffers + cache)
-            result.update(
-                memoryTotal=total * 1024,
-                memoryAvail=available * 1024,
-                memory=100 * (total - available) / total,
-                online=True,
-            )
-        except (OSError, ValueError, ZeroDivisionError):
+            if kind == "identity":
+                result["model"] = profile.identity(read)
+            elif kind == "uptime":
+                result["uptime"] = int(read("1.3.6.1.2.1.25.1.1.0")[1]) // 100
+            elif kind == "temperature":
+                value = profile.temperature(read)
+                if value is not None: result["temperature"] = value
+            elif kind == "cpu":
+                value = profile.cpu(read)
+                if value is not None: result["cpu"] = value
+                result["_ok"] = profile.cpu_mode != "unsupported"
+            elif kind == "memory":
+                value = profile.memory(read)
+                if value:
+                    total,available = value
+                    result.update(memoryTotal=total,memoryAvail=available,memory=100*(total-available)/total)
+        except (OSError,ValueError,ArithmeticError,TypeError):
             pass
     if group is None or group == "storage":
         try:
@@ -744,23 +1125,9 @@ def sample(cfg, group=None):
             if not idx:
                 raise ValueError("No active Ethernet interface")
             result["interfaceIndex"] = idx
-            rx, tx = sn("1.3.6.1.2.1.31.1.1.1.6." + idx), sn(
-                "1.3.6.1.2.1.31.1.1.1.10." + idx
-            )
-            now = time.monotonic()
-            counter_key = target_key(cfg) + (idx,)
-            if (
-                previous
-                and previous[3] == counter_key
-                and rx >= previous[0]
-                and tx >= previous[1]
-            ):
-                result.update(
-                    rx=(rx - previous[0]) / (now - previous[2]),
-                    tx=(tx - previous[1]) / (now - previous[2]),
-                )
-            previous = rx, tx, now, counter_key
-            result["_ok"] = True
+            values = profile.network(read, idx)
+            if values: result.update(rx=values[0],tx=values[1])
+            result["_ok"] = profile.network_mode != "unsupported"
             result["interface"] = next(
                 (p["name"] for p in interfaces if p["index"] == idx), idx
             )
@@ -825,8 +1192,20 @@ def target_key(cfg):
     return cfg["nas"], cfg["port"], credentials
 
 
+def storage_order(value):
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part)
+        for part in re.split(r"([0-9]+)", str(value))
+        if part
+    )
+
+
+def reset_network_baseline():
+    profile = profiles.get(target_key(config))
+    if profile is not None: profile.network_previous = None
+
+
 def expire_collections(now, cfg):
-    global previous
     ttl = max(30, cfg["interval"] * 6)
     cache_ttl = max(60, ttl)
     for group, primary in (
@@ -837,7 +1216,7 @@ def expire_collections(now, cfg):
     ):
         if now - collection_stamps.get(group, -math.inf) > cache_ttl:
             if group == "network" and state[primary] >= 0:
-                previous = None
+                reset_network_baseline()
             state[primary] = -1
             if group == "network":
                 state["tx"] = -1
@@ -845,9 +1224,17 @@ def expire_collections(now, cfg):
 
 
 def collection_worker(group):
-    global last_ok, previous
-    failures, due, seen = 0, 0, None
+    global last_ok
+    failures, due, seen, suspended = 0, 0, None, False
     while True:
+        if not activity_allowed("snmp"):
+            suspended = True
+            time.sleep(0.2)
+            continue
+        if suspended:
+            suspended = False
+            if not failures: due = 0
+            if group == "network": reset_network_baseline()
         with lock:
             cfg = copy.deepcopy(config)
         key = target_key(cfg)
@@ -856,7 +1243,7 @@ def collection_worker(group):
             seen, due, failures = selection, 0, 0
             if group == "network":
                 with lock:
-                    previous = None
+                    reset_network_baseline()
                     collection_stamps.pop("network", None)
                     state["rx"] = state["tx"] = -1
         now = time.monotonic()
@@ -902,7 +1289,21 @@ def collection_worker(group):
                     failures=failures, updated=collection_stamps.get(group)
                 )
         period = (
-            3600 if group == "identity" else 7200 if group == "uptime" else 15 if group == "temperature" else max(15, cfg["interval"]) if group in ("cpu", "memory") else cfg["interval"]
+            3600
+            if group == "identity"
+            else (
+                7200
+                if group == "uptime"
+                else (
+                    15
+                    if group == "temperature"
+                    else (
+                        max(15, cfg["interval"])
+                        if group in ("cpu", "memory")
+                        else cfg["interval"]
+                    )
+                )
+            )
         )
         prime = ok and group in ("cpu", "network") and result.get(primary, -1) < 0
         wait = 1 if prime else max(1, period - (now - sample_started))
@@ -912,6 +1313,9 @@ def collection_worker(group):
 def interface_poll():
     seen, due, failures = None, 0, 0
     while True:
+        if not activity_allowed("snmp"):
+            time.sleep(0.2)
+            continue
         with lock:
             cfg = copy.deepcopy(config)
         key = target_key(cfg)[:3]
@@ -931,7 +1335,8 @@ def interface_poll():
 
 
 def poll():
-    global collection_target, previous, cpu_previous, last_ok
+    global collection_target, last_ok, collecting, selection_save_at
+    collecting = True
     # One worker owns each coherent snapshot. UI edits do not reset counter baselines.
     with lock:
         collection_target = target_key(config)
@@ -940,10 +1345,16 @@ def poll():
         threading.Thread(target=collection_worker, args=(group,), daemon=True).start()
     while True:
         with lock:
+            if selection_save_at and time.monotonic() >= selection_save_at:
+                try:
+                    persist_config()
+                    selection_save_at = 0.0
+                except OSError:
+                    selection_save_at = time.monotonic() + 5.0
             key = target_key(config)
             if key != collection_target:
                 collection_target = key
-                previous = cpu_previous = None
+                profiles.clear()
                 collection_stamps.clear()
                 collection_diagnostics.clear()
                 table_stamps.clear()
@@ -961,8 +1372,9 @@ def poll():
                     history=[],
                     storage=-1,
                 )
-            expire_collections(time.monotonic(), config)
-            expire_tables(time.monotonic())
+            if activity_allowed("snmp"):
+                expire_collections(time.monotonic(), config)
+                expire_tables(time.monotonic())
             if weather["valid"] and time.monotonic() - weather_at > max(
                 1800, config["weatherInterval"] * 180
             ):
@@ -1008,7 +1420,7 @@ def render(page, data, cfg):
     words = [
         cfg["nas"],
         data["ip"],
-        data["model"] or "Synology",
+        (cfg.get("machineName") or profiles.get(target_key(cfg), Profile()).automatic_name()).replace(" ", "_"),
         data["volume"] or "--",
         data["interface"] or "--",
         "SNMPv3" if cfg.get("snmpVersion") == "3" else "SNMPv2c",
@@ -1045,7 +1457,7 @@ def render(page, data, cfg):
         "\n".join(
             str(v).replace("\n", " ").replace("\t", " ")
             for v in [
-                w["city"] if cfg["language"] == "zh" else w["cityEnglish"],
+                (w["city"] if cfg["language"] == "zh" else w["cityEnglish"]) if cfg["cityCode"] in CITY_CODES else (w["cityEnglish"] or "Weather"),
                 w["condition"] if cfg["language"] == "zh" else w["conditionEnglish"],
                 w.get("wind", "") if cfg["language"] == "zh" else w["windEnglish"],
                 w["observed"],
@@ -1095,6 +1507,21 @@ def render(page, data, cfg):
     if security != "-" and cfg.get("snmpPrivacy", "none") != "none":
         security += "+" + cfg["snmpPrivacy"]
     payload += security + "\n"
+    notice = (
+        data.get("machineNotice", "")
+        if time.monotonic() < data.get("machineNoticeUntil", 0)
+        else ""
+    )
+    payload += (
+        notice
+        + "\nSNMP "
+        + str(cfg.get("activeMachine", 0) + 1)
+        + "/"
+        + str(len(cfg.get("machines", [])) or 1)
+        + "\n"
+    )
+    payload += cfg.get("cardBackground", "#103040") + "\n"
+    payload += str(data.get("cityScrollMs", int((time.monotonic()-w.get("scrollStarted",time.monotonic()))*1000))) + "\n"
     text = subprocess.run(
         [
             str(
@@ -1109,7 +1536,7 @@ def render(page, data, cfg):
             )
         ],
         input=payload.encode("utf8"),
-        env={**os.environ, "MOS2_FONT_RESOURCE": str(ROOT / "data/fonts/ui04.bin")},
+        env={**os.environ, "MOS2_FONT_DIRECTORY": str(ROOT / "data/fonts")},
         capture_output=True,
         check=True,
         timeout=3,
@@ -1168,7 +1595,7 @@ def qr_commands(mode, cfg):
             "MOS2-NAS-DEMO",
             (
                 text("Key: {key}").format(key="12345678")
-                if mode == "setup" or cfg["admin"] == "12345678"
+                if mode == "setup" or default_password(cfg)
                 else text("Default password changed")
             ),
             text("Open 192.168.4.1"),
@@ -1178,7 +1605,7 @@ def qr_commands(mode, cfg):
             "127.0.0.1",
             (
                 text("Key: {key}").format(key="12345678")
-                if cfg["admin"] == "12345678"
+                if default_password(cfg)
                 else text("Default password changed")
             ),
             text("Touch to return"),
@@ -1207,7 +1634,39 @@ def qr_commands(mode, cfg):
     return out
 
 
+class LocalHTTPServer(ThreadingHTTPServer):
+    """Bound connection workers so slow local clients cannot create unlimited threads."""
+
+    daemon_threads = True
+    request_queue_size = 16
+
+    def __init__(self, *args, **kwargs):
+        self.slots = threading.BoundedSemaphore(16)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, address)
+        except Exception:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self.slots.release()
+
+
 class Handler(BaseHTTPRequestHandler):
+    # Bound slow clients before parsing headers/body. The service is loopback-only.
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(5)
+
     def log_message(self, *args):
         pass
 
@@ -1218,10 +1677,13 @@ class Handler(BaseHTTPRequestHandler):
             body = body.encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", (headers or {}).get("Cache-Control", "no-store"))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "same-origin")
         self.send_header("Content-Length", str(len(body)))
         for key, value in (headers or {}).items():
-            self.send_header(key, value)
+            if key != "Cache-Control": self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -1238,7 +1700,7 @@ class Handler(BaseHTTPRequestHandler):
                 sessions.pop(session, None)
                 return False
             sessions[session] = time.monotonic()
-        return pending or config["admin"] != "12345678"
+        return pending or not default_password(config)
 
     def entry(self, setup=False, error=""):
         action = "/wifi/save" if setup else "/login"
@@ -1249,10 +1711,14 @@ class Handler(BaseHTTPRequestHandler):
                 if setup
                 else (
                     "change"
-                    if self.signed_in(pending=True) and config["admin"] == "12345678"
+                    if self.signed_in(pending=True) and default_password(config)
                     else "login"
                 )
             ),
+            wifiClass="" if setup else "hidden",
+            ssidDisabled="" if setup else "disabled",
+            entryTitle="连接 Wi-Fi" if setup else "管理登录",
+            entrySubmit="保存并连接" if setup else "登录",
             action=action,
             token=token,
             ssid=config["ssid"],
@@ -1264,14 +1730,18 @@ class Handler(BaseHTTPRequestHandler):
         return self.send(template, "text/html; charset=utf-8")
 
     def do_GET(self):
-        global reset_pending, ui_mode, album_position, album_at
+        if not local_request(self.headers, self.server.server_address[1]):
+            return self.send(dict(error="origin"), code=403)
+        global reset_pending, ui_mode, album_position, album_at, _management_demand
         path = urlparse(self.path)
         with lock:
             if reset_pending and time.monotonic() - reset_started >= 10:
                 reset_pending = False
             cfg, data = copy.deepcopy(config), copy.deepcopy(state)
             if data.get("uptime") and "uptime" in collection_stamps:
-                data["uptime"] += max(0, int(time.monotonic() - collection_stamps["uptime"]))
+                data["uptime"] += max(
+                    0, int(time.monotonic() - collection_stamps["uptime"])
+                )
             entries = album_entries()
             if entries:
                 album_position %= len(entries)
@@ -1295,8 +1765,13 @@ class Handler(BaseHTTPRequestHandler):
             )
             data.update(
                 alarm=copy.deepcopy(alarm),
-                disks=copy.deepcopy(disks),
-                volumes=copy.deepcopy(volumes),
+                disks=sorted(
+                    copy.deepcopy(disks),
+                    key=lambda d: storage_order(d.get("index", d["name"])),
+                ),
+                volumes=sorted(
+                    copy.deepcopy(volumes), key=lambda v: storage_order(v["name"])
+                ),
                 albumCount=len(album_entries()),
                 albumInterval=cfg["albumInterval"],
             )
@@ -1328,12 +1803,31 @@ class Handler(BaseHTTPRequestHandler):
                 )
             )
         if path.path == "/setup":
-            return self.entry(True)
+            if ui_mode == "setup" or not config["ssid"]:
+                return self.entry(True)
+            return self.send("", "text/plain", 303, {"Location": "/manage"})
         if path.path == "/manage":
             if not self.signed_in():
                 return self.entry()
             h = (ROOT / "web/management.html").read_text(encoding="utf8")
+            h = "\n".join(line.strip() for line in h.splitlines() if line.strip())
+            for filename in ("i18n.js", "firmware-bundle.js", "management.js"):
+                import hashlib
+                digest = hashlib.sha256((ROOT / "web" / filename).read_text(encoding="utf8").encode("utf8")).hexdigest()[:16]
+                h = re.sub(r"/" + re.escape(filename) + r"\?v=[^\"]+", "/" + filename + "?v=" + digest, h)
             h = re.sub(r'(<input name="ssid"[^>]*?)\srequired', r"\1", h)
+            if not cfg["machines"]:
+                cfg["machines"] = [{**{k: cfg[k] for k in MACHINE_FIELDS}, "name": cfg.get("machineName", "SNMP 1")} ]
+                cfg["activeMachine"] = 0
+            try:
+                edit = int(parse_qs(path.query).get("device", [cfg["activeMachine"]])[0])
+                if not 0 <= edit < len(cfg["machines"]): raise ValueError()
+            except ValueError:
+                return self.send("Invalid device", "text/plain", 400)
+            selected = cfg["machines"][edit]
+            cfg.update({k: selected[k] for k in MACHINE_FIELDS})
+            cfg["machineName"] = selected["name"]
+            cfg["selectedMachine"] = edit
             public = {
                 k: v
                 for k, v in cfg.items()
@@ -1346,6 +1840,9 @@ class Handler(BaseHTTPRequestHandler):
                     "snmpPrivacyPassword",
                 )
             }
+            public["machines"] = [
+                {"name": m["name"], "address": m["nas"]} for m in cfg["machines"]
+            ]
             h = (
                 h.replace(
                     "{{config}}",
@@ -1361,6 +1858,7 @@ class Handler(BaseHTTPRequestHandler):
             if asset.is_file() and asset.suffix == ".jpg":
                 return self.send(asset.read_bytes(), "image/jpeg")
         if path.path in (
+            "/weather-cities.js",
             "/i18n.js",
             "/management.js",
             "/firmware-bundle.js",
@@ -1371,6 +1869,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(
                 (ROOT / "web" / Path(path.path).name).read_text(encoding="utf8"),
                 "application/javascript; charset=utf-8",
+                headers={"Cache-Control": "private, max-age=31536000, immutable"} if path.query.startswith("v=") else None,
             )
         if path.path == "/api/album":
             return self.send(album_entries())
@@ -1384,6 +1883,10 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, KeyError):
                 return self.send("No photo", "text/plain", 404)
         if path.path == "/api/status":
+            data["displayName"] = cfg.get("machineName") or profiles.get(target_key(cfg), Profile()).automatic_name()
+            if "management" in parse_qs(path.query) and not self.signed_in():
+                return self.send(dict(error="login_required"), code=401)
+            if "management" in parse_qs(path.query): _management_demand = time.monotonic()
             return self.send(data)
         if path.path == "/api/display":
             try:
@@ -1407,8 +1910,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.send("Not found", "text/plain", 404)
 
     def do_POST(self):
-        global revision, previous, alarm_manual, alarm_start, alarm_taps, alarm_day, ui_mode, reset_pending, reset_started, reset_count, reset_tap_at, tap_count, tap_at, reset_nonce, reset_nonce_at, album_position, album_at
-        if config["admin"] == "12345678" and urlparse(self.path).path not in (
+        global revision, alarm_snooze_used, alarm_manual, alarm_start, alarm_taps, alarm_day, ui_mode, reset_pending, reset_started, reset_count, reset_tap_at, tap_count, tap_at, reset_nonce, reset_nonce_at, album_position, album_at
+        if default_password(config) and urlparse(self.path).path not in (
             "/login",
             "/password/change",
             "/logout",
@@ -1417,7 +1920,30 @@ class Handler(BaseHTTPRequestHandler):
             "/api/simulator/page",
         ):
             return self.send(dict(error="password_change_required"), code=403)
-        length = int(self.headers.get("Content-Length", "0"))
+        if not local_request(self.headers, self.server.server_address[1]):
+            self.close_connection = True
+            return self.send(dict(error="origin"), code=403)
+        path = urlparse(self.path).path
+        # A public CSRF token is not an authentication credential.
+        if (
+            path not in ("/login", "/wifi/save", "/password/change", "/logout")
+            and not self.signed_in()
+        ):
+            return self.send(dict(error="login_required"), code=401)
+        if (
+            self.headers.get("Transfer-Encoding")
+            or len(self.headers.get_all("Content-Length", [])) != 1
+        ):
+            self.close_connection = True
+            return self.send(dict(error="length"), code=400)
+        try:
+            text_length = self.headers["Content-Length"]
+            if not re.fullmatch(r"[0-9]{1,10}", text_length):
+                raise ValueError()
+            length = int(text_length)
+        except (ValueError, TypeError):
+            self.close_connection = True
+            return self.send(dict(error="length"), code=400)
         if urlparse(self.path).path == "/api/firmware":
             if not self.signed_in():
                 return self.send(dict(error="login_required"), code=401)
@@ -1447,7 +1973,7 @@ class Handler(BaseHTTPRequestHandler):
                 if len(files) != 1:
                     raise ValueError("Expected one firmware")
                 content = files[0].get_payload(decode=True)
-                resource = (ROOT / "data/fonts/ui04.bin").read_bytes()
+                resource = (ROOT / "data/fonts/catalog.bin").read_bytes()
                 contract = (
                     b"MOS2OTA1" + (0x200000).to_bytes(4, "little") + resource[12:16]
                 )
@@ -1463,6 +1989,8 @@ class Handler(BaseHTTPRequestHandler):
                     with lock:
                         erase_album()
                         config.update(copy.deepcopy(defaults))
+                        clear_telemetry()
+                        sessions.clear()
                         persist_config()
                         state["page"] = 6
                         ui_mode = "setup"
@@ -1508,7 +2036,8 @@ class Handler(BaseHTTPRequestHandler):
                 content = part.get_payload(decode=True)
                 if len(content) > 49152:
                     raise ValueError("Too large")
-                im = Image.open(io.BytesIO(content))
+                # Restrict the decoder itself, before format inspection, to JPEG.
+                im = Image.open(io.BytesIO(content), formats=["JPEG"])
                 if (
                     im.format != "JPEG"
                     or im.size != (240, 240)
@@ -1525,21 +2054,40 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(str(e), "text/plain", 400)
         if length > 4096:
             return self.send("Too large", "text/plain", 413)
-        form = {
-            k: v[0]
-            for k, v in parse_qs(
-                self.rfile.read(length).decode(), keep_blank_values=True
-            ).items()
-        }
+        try:
+            body = self.rfile.read(length)
+            if len(body) != length:
+                raise ValueError()
+            form = {
+                k: v[0]
+                for k, v in parse_qs(
+                    body.decode(), keep_blank_values=True, max_num_fields=64
+                ).items()
+            }
+        except (UnicodeDecodeError, ValueError):
+            return self.send(dict(error="invalid"), code=400)
         if form.get("token") != token:
             return self.send("Reload the page", "text/plain", 403)
         if self.path == "/login":
-            if form.get("password") != config["admin"]:
-                return self.entry(error="wrong")
-            session = secrets.token_hex(24)
+            error = ""
             with lock:
-                sessions.clear()
-                sessions[session] = time.monotonic()
+                if login_guard.blocked():
+                    error = "wait"
+                elif not password_valid(form.get("password", ""), config["admin"]):
+                    login_guard.failed()
+                    error = "wrong"
+                else:
+                    login_guard.clear()
+            if error:
+                return self.entry(error=error)
+            cookie = SimpleCookie()
+            cookie.load(self.headers.get("Cookie", ""))
+            existing = cookie.get("mos2_session")
+            with lock:
+                now = time.monotonic()
+                session = existing.value if existing and existing.value in sessions and now - sessions[existing.value] <= 1800 else secrets.token_hex(24)
+                sessions.clear()  # One active management browser session.
+                sessions[session] = now
             return self.send(
                 "",
                 "text/plain",
@@ -1564,7 +2112,7 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
         if self.path == "/password/change":
-            if not self.signed_in(pending=True) or config["admin"] != "12345678":
+            if not self.signed_in(pending=True) or not default_password(config):
                 return self.send(dict(error="expired"), code=403)
             password = form.get("newPassword", "")
             if (
@@ -1589,19 +2137,27 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
         if self.path == "/wifi/save":
+            if ui_mode != "setup" and not self.signed_in():
+                return self.send(dict(error="login_required"), code=401)
             ssid, password = form.get("ssid", ""), form.get("password", "")
             if not 0 < len(ssid.encode()) <= 32 or not 8 <= len(password) <= 63:
                 return self.send(dict(error="invalid"), code=400)
             with lock:
+                old = copy.deepcopy(config)
                 config.update(ssid=ssid, **{"pass": password})
-                persist_config()
+                try:
+                    persist_config()
+                except OSError:
+                    config.clear()
+                    config.update(old)
+                    return self.send(dict(error="saveFailed"), code=500)
             return self.send(
                 {
                     "saved": True,
                     "message": "模拟器不连接实际 Wi-Fi / Simulator does not join Wi-Fi",
                 }
             )
-        if config["admin"] == "12345678" and self.path not in (
+        if default_password(config) and self.path not in (
             "/api/touch",
             "/api/simulator/page",
         ):
@@ -1610,8 +2166,13 @@ class Handler(BaseHTTPRequestHandler):
             if form.get("language") not in ("zh", "en"):
                 return self.send("Invalid language", "text/plain", 400)
             with lock:
+                old_language = config["adminLanguage"]
                 config["adminLanguage"] = form["language"]
-                persist_config()
+                try:
+                    persist_config()
+                except OSError:
+                    config["adminLanguage"] = old_language
+                    return self.send(dict(error="saveFailed"), code=500)
             return self.send({})
         if self.path == "/api/album/delete":
             try:
@@ -1628,6 +2189,7 @@ class Handler(BaseHTTPRequestHandler):
                     alarm_manual = True
                     alarm.update(state=1)
                     alarm_start = time.time()
+                    alarm_snooze_used = False
                     alarm_taps = 0
                     state["page"] = 6
                 elif alarm["state"] in (1, 2):
@@ -1650,11 +2212,42 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 erase_album()
                 config.update(copy.deepcopy(defaults))
+                clear_telemetry()
+                persist_config()
+                sessions.clear()
                 state["page"] = 6
                 ui_mode = "setup"
                 reset_pending = False
                 revision += 1
             return self.send({})
+        if self.path == "/api/storage/rediscover":
+            global storage_discovery_generation, storage_discovery_requested_at
+            with lock:
+                now = time.monotonic()
+                if (
+                    storage_discovery_requested_at
+                    and now - storage_discovery_requested_at < 60
+                ):
+                    return self.send("Discovery already requested", "text/plain", 429)
+                storage_discovery_requested_at = now
+                storage_discovery_generation += 1
+            return self.send({})
+        if self.path == "/api/machine":
+            with lock:
+                before = copy.deepcopy(config)
+                try:
+                    edited = machine_action(form)
+                except ValueError:
+                    return self.send("Invalid device action", "text/plain", 400)
+                except OSError:
+                    return self.send("Save failed", "text/plain", 500)
+            public = {k:v for k,v in config.items() if k not in ("pass", "admin", "community", "snmpPassword", "snmpPrivacyPassword", "machines")}
+            public.update({k:v for k,v in config["machines"][edited].items() if k not in ("community", "snmpPassword", "snmpPrivacyPassword", "name")})
+            public["machineName"] = config["machines"][edited]["name"]
+            public["machines"] = [{"name":m["name"], "address":m["nas"]} for m in config["machines"]]
+            public["selectedMachine"] = edited
+            return self.send(public)
+
         if self.path == "/api/touch":
             try:
                 count = int(
@@ -1674,7 +2267,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError:
                 return self.send("Invalid click count", "text/plain", 400)
-            if count not in (1, 2, 3, 5, 6, 8):
+            if count not in (1, 2, 3, 5, 6, 8, 9):
                 return self.send("Invalid click count", "text/plain", 400)
             with lock:
                 now = time.monotonic()
@@ -1682,6 +2275,8 @@ class Handler(BaseHTTPRequestHandler):
                     if count == 3 and now - reset_started < 10:
                         erase_album()
                         config.update(copy.deepcopy(defaults))
+                        clear_telemetry()
+                        sessions.clear()
                         persist_config()
                         state["page"] = 6
                         ui_mode = "setup"
@@ -1703,7 +2298,9 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         next_page()
                 elif count == 2:
-                    if state["page"] == 8:
+                    if not ui_mode and state["page"] in (0, 4):
+                        select_machine((config["activeMachine"] + 1) % len(config["machines"]), persist=False)
+                    elif state["page"] == 8:
                         state["diskGroup"] = (state["diskGroup"] + 1) % max(
                             1, (len(disks) + 3) // 4
                         )
@@ -1739,10 +2336,30 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({})
             except (ValueError, KeyError):
                 return self.send("Invalid page", "text/plain", 400)
+        if self.path == "/api/weather/check":
+            code=form.get("code", "")
+            if not re.fullmatch(r"[1-9][0-9]{8}",code): return self.send(dict(status="invalid"),code=400)
+            with lock:
+                if weather_code_ready(code): return self.send(dict(status="valid"))
+                if weather_validation["status"]=="pending":
+                    return self.send(dict(status="pending" if weather_validation["code"]==code else "busy"))
+                if weather_validation["code"]==code and time.monotonic()-weather_validation["completed"]<3:
+                    return self.send(dict(status=weather_validation["status"]))
+                weather_validation.update(code=code,status="pending",completed=0)
+                threading.Thread(target=probe_weather_code,args=(code,),daemon=True).start()
+            return self.send(dict(status="pending"))
         if self.path == "/save":
+            if re.fullmatch(r"10[12][0-9]{6}",form.get("cityCode", "")) and not weather_code_ready(form["cityCode"]):
+                return self.send("Verify the city code before saving.", "text/plain", 409)
             try:
                 with lock:
+                    if not config["machines"]: capture_machine()
+                    edit = int(form.get("machineIndex", config["activeMachine"]))
+                    if not 0 <= edit < len(config["machines"]): raise ValueError()
                     new = copy.deepcopy(config)
+                    selected = new["machines"][edit]
+                    new.update({k: selected[k] for k in MACHINE_FIELDS})
+                    new["machineName"] = selected["name"]
                 ipaddress.IPv4Address(form["nas"])
                 for k in (
                     "port",
@@ -1776,7 +2393,7 @@ class Handler(BaseHTTPRequestHandler):
                     and new["alarmEnabled"] in (0, 1)
                     and 1 <= new["snooze"] <= 30
                     and 3 <= new["albumInterval"] <= 300
-                    and 5 <= new["weatherInterval"] <= 60
+                    and 10 <= new["weatherInterval"] <= 120
                     and 0 <= new["rotation"] <= 3
                 ):
                     raise ValueError()
@@ -1804,6 +2421,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError()
                 new.update(
                     nasBackground=form.get("nasBackground", "#21455c"),
+                    cardBackground=form.get("cardBackground", "#103040"),
                     language=form["language"],
                     clockColor=form["clockColor"],
                     minuteColor=form["minuteColor"],
@@ -1820,7 +2438,7 @@ class Handler(BaseHTTPRequestHandler):
                     "snmpPassword",
                     "snmpPrivacyPassword",
                 ):
-                    if form.get(k):
+                    if form.get(k) and (k != "admin" or not password_valid(form[k], config["admin"])):
                         new[k] = form[k]
                 if form.get("admin") and (
                     len(form["admin"].encode()) < 8 or form["admin"] == "12345678"
@@ -1863,6 +2481,16 @@ class Handler(BaseHTTPRequestHandler):
                     if config["alarmTime"] != new["alarmTime"]:
                         alarm_day = ""
                     previous_config = copy.deepcopy(config)
+                    new["machineName"] = form.get(
+                        "machineName", new["machineName"]
+                    ).strip()
+                    if len(new["machineName"].encode()) > 48:
+                        raise ValueError()
+                    new["machines"][edit] = {**{k: new[k] for k in MACHINE_FIELDS}, "name": new["machineName"]}
+                    current = new["machines"][config["activeMachine"]]
+                    new["activeMachine"] = config["activeMachine"]
+                    new.update({k: current[k] for k in MACHINE_FIELDS})
+                    new["machineName"] = current["name"]
                     config.update(new)
                     try:
                         persist_config()
@@ -1871,11 +2499,12 @@ class Handler(BaseHTTPRequestHandler):
                         config.update(previous_config)
                         return self.send("Save failed", "text/plain", 500)
                     revision += 1
-                    state.update(page=new["home"])
-                return self.send(
-                    "Saved." if new["adminLanguage"] == "en" else "已保存。",
-                    "text/plain; charset=utf-8",
-                )
+                    # Editing a profile does not change the visible page.
+                password_changed = bool(form.get("admin")) and not password_valid(form["admin"], previous_config["admin"])
+                if password_changed:
+                    with lock: sessions.clear()
+                return self.send("Saved. Restarting device.", "text/plain; charset=utf-8",
+                                 headers={"X-MOS2-Save-Action": "restart"})
             except (ValueError, KeyError):
                 return self.send("Invalid settings", "text/plain", 400)
         return self.send("Not found", "text/plain", 404)
@@ -1887,9 +2516,10 @@ if __name__ == "__main__":
         "--port", type=int, default=0 if getattr(sys, "frozen", False) else 8765
     )
     p.add_argument("--no-browser", action="store_true")
+    p.add_argument("--config", type=Path, help="Private writable configuration file")
     args = p.parse_args()
-    load_config(album_dir / "config.json")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    load_config(args.config or album_dir / "config.json")
+    server = LocalHTTPServer(("127.0.0.1", args.port), Handler)
     address = f"http://127.0.0.1:{server.server_address[1]}/"
     if getattr(sys, "frozen", False) and not args.no_browser:
         import webbrowser

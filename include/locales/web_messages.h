@@ -23,6 +23,13 @@ inline String text(const String& key,bool english){if(english)return key;
  if(key=="No active alarm")return "没有活动闹钟。";
  if(key=="Invalid click count")return "点击次数无效。";
  if(key=="Reset confirmation expired")return "重置确认已过期。";
+ if(key=="Connect to Wi-Fi")return "连接 Wi-Fi";
+ if(key=="Sign in")return "管理登录";
+ if(key=="Save & connect")return "保存并连接";
+ if(key=="Saved.")return "已保存。";
+ if(key=="Verify the city code before saving.")return "请先校验城市代码再保存。";
+ if(key=="Saved. Applied immediately.")return "已保存，已立即生效。";
+ if(key=="Saved. Sign in with the new password.")return "已保存，请使用新密码重新登录。";
  return key;
 }
 }

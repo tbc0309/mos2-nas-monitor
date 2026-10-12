@@ -11,7 +11,7 @@ ESP8266 使用 4 MiB Flash 和 `eagle.flash.4m2m.ld` 布局。
 | LittleFS | `0x200000`–`0x3FA000` | 2024 KiB，保存字库、配置和照片 |
 | SDK / RF 保留区 | `0x3FA000` 起 | 系统参数 |
 
-发布的统一文件 `MOS2-NAS-1.1.0.bin` 包含程序与文件系统，总长 4,169,728 字节。`0x100000` 保存 `MOS2ALL1` 元数据，记录程序长度及程序、文件系统 CRC32，不覆盖 SDK / RF 保留区。
+发布的统一文件 `MOS2-NAS-1.2.0.bin` 包含程序与文件系统，总长 4,169,728 字节。`0x100000` 保存 `MOS2ALL1` 元数据，记录程序长度及程序、文件系统 CRC32，不覆盖 SDK / RF 保留区。
 
 ## 全新安装
 
@@ -20,14 +20,14 @@ ESP8266 使用 4 MiB Flash 和 `eagle.flash.4m2m.ld` 布局。
 ```shell
 pio run
 pio run -t buildfs
-python tools/build_install_image.py --output MOS2-NAS-1.1.0.bin
+python tools/build_install_image.py --output MOS2-NAS-1.2.0.bin
 ```
 
 替换 `COM7` 为实际端口：
 
 ```shell
 python -m esptool --port COM7 erase-flash
-python -m esptool --port COM7 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.1.0.bin
+python -m esptool --port COM7 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.2.0.bin
 ```
 
 全新安装清除配置与照片。首次热点及管理密码为 `12345678`，首次管理登录必须修改密码。发布镜像不包含用户 Wi-Fi 或 NAS 凭据。
@@ -42,16 +42,23 @@ python -m esptool --port COM7 write-flash --flash-mode dio --flash-size 4MB 0x0 
 
 浏览器校验完整镜像后，提取程序提交给 OTA。设备再次校验长度、CRC32、`MOS2OTA1` 布局及字库兼容标识，写入暂存区，验证成功才安排重启。上传需要有效登录会话与 CSRF 校验。
 
-网页升级不覆盖整个文件系统。旧版网页不识别统一文件，或更换字库导致资源 CRC 不匹配时，需要使用同一统一文件通过 USB 重新安装。
+网页升级不覆盖整个文件系统。程序与字库必须来自同一构建；更换字库导致资源 CRC 不匹配时，通过 USB 安装完整统一文件。
 
 模拟器验证上传、兼容性和保留 / 清空流程，不执行 ESP8266 固件。
 
 ## 字库与用户数据
 
-腾讯 W7 原生 hint / 16 级灰阶字库位于 `/fonts/ui04.bin`。程序保留索引和字宽数据，按需读取字形，缓存 12 个展开字形，约 4 KiB RAM；12 / 16 字号覆盖常用中文，20 / 26 字号覆盖全部界面用字，均重新生成腾讯 W7 灰阶字形，不混用旧单色点阵。原版时钟图片数字与天气动画仍位于程序区。
+腾讯 W7 原生 hint / 16 级灰阶字库分为数字英文、界面、天气和地名四类，每类包含四种字号，共 16 个独立文件。启动仅读取 `/fonts/catalog.bin`，使用时校验并打开对应文件；共用一个文件句柄、1392 字节固定字形池（最多 12 项）和 128 字节解码缓冲。原版时钟图片数字与天气动画仍位于程序区。分类与扩展方法见 [字库说明](FONTS.md)。
 
-启动时校验资源格式、长度与 CRC32。资源缺失或损坏时，屏幕使用内置英文字体提示，网页配网和管理仍可用。
+缺失或损坏的文件单独停用，不反复重试；其他字库、网页配网和管理仍可用。
 
 恢复出厂设置清除配置、照片与上传临时文件，保留 `/fonts/` 和 `/assets/` 系统资源。采样缓存存放在 RAM，不持续写入 Flash。
 
 重建字库的方法见 [项目 README](../README.md#字库与验证)。程序索引与字库必须匹配；模拟器和 Windows 发布包需要包含相同的 `data` 资源。
+
+
+## 配置加密与字集生成
+
+新配置格式为 schema 3。文件包含版本、96 位随机 nonce、AES-256-CTR 密文及 HMAC-SHA256；管理密码是加盐 PBKDF2 校验值。密钥 `/config.key` 随机生成，不随固件分发；恢复出厂设置同时删除配置和密钥。旧明文格式不读取、不自动迁移。
+
+`tools/font_charset.py` 从 LCD 语言映射、绘制与提示文案提取用字，再合并 `tools/font-extra.txt`。不读取上一次生成的索引，不保留历史 GB2312 字集。四种字号当前共 697 字形，二进制资源总计 331227 字节（含目录和文件头，不含开发用 JSON 清单）。城市和天气扩展清单可自行增加；用户自定义设备名或罕见地名不保证全部覆盖，需要加入清单并重建资源和固件。

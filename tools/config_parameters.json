@@ -1,0 +1,373 @@
+[
+  {
+    "key": "adminDefault",
+    "member": "adminDefault",
+    "type": "bool",
+    "default": true,
+    "group": "Management",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "ssid",
+    "member": "wifiSsid",
+    "type": "String",
+    "default": "",
+    "group": "Management",
+    "secret": false,
+    "apply": "restart",
+    "maxBytes": 32
+  },
+  {
+    "key": "pass",
+    "member": "wifiPassword",
+    "type": "String",
+    "default": "",
+    "group": "Management",
+    "secret": true,
+    "apply": "restart",
+    "maxBytes": 63
+  },
+  {
+    "key": "nas",
+    "member": "snmpHost",
+    "type": "String",
+    "default": "192.168.1.100",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "community",
+    "member": "snmpCommunity",
+    "type": "String",
+    "default": "public",
+    "group": "SNMP",
+    "secret": true,
+    "apply": "restart",
+    "maxBytes": 64
+  },
+  {
+    "key": "admin",
+    "member": "adminPasswordVerifier",
+    "type": "String",
+    "default": "PBKDF2 verifier (initial password: 12345678)",
+    "group": "Management",
+    "secret": true,
+    "apply": "restart",
+    "maxBytes": 64
+  },
+  {
+    "key": "storage",
+    "member": "storageVolumeIndex",
+    "type": "String",
+    "default": "",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "iface",
+    "member": "networkInterfaceIndex",
+    "type": "String",
+    "default": "",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "snmpVersion",
+    "member": "snmpVersion",
+    "type": "String",
+    "default": "2c",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart",
+    "choices": [
+      "2c",
+      "3"
+    ]
+  },
+  {
+    "key": "snmpUser",
+    "member": "snmpUsername",
+    "type": "String",
+    "default": "",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart",
+    "maxBytes": 32
+  },
+  {
+    "key": "snmpPassword",
+    "member": "snmpAuthPassword",
+    "type": "String",
+    "default": "",
+    "group": "SNMP",
+    "secret": true,
+    "apply": "restart",
+    "maxBytes": 64
+  },
+  {
+    "key": "snmpAuth",
+    "member": "snmpAuthProtocol",
+    "type": "String",
+    "default": "MD5",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart",
+    "choices": [
+      "MD5",
+      "SHA"
+    ]
+  },
+  {
+    "key": "snmpPrivacy",
+    "member": "snmpPrivacyProtocol",
+    "type": "String",
+    "default": "none",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart",
+    "choices": [
+      "none",
+      "DES",
+      "AES"
+    ]
+  },
+  {
+    "key": "snmpPrivacyPassword",
+    "member": "snmpPrivacyPassword",
+    "type": "String",
+    "default": "",
+    "group": "SNMP",
+    "secret": true,
+    "apply": "restart",
+    "maxBytes": 64
+  },
+  {
+    "key": "cityCode",
+    "member": "weatherCityCode",
+    "type": "String",
+    "default": "101030100",
+    "group": "Weather",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "ntpServer",
+    "member": "timeServer",
+    "type": "String",
+    "default": "ntp.aliyun.com",
+    "group": "Weather",
+    "secret": false,
+    "apply": "restart",
+    "maxBytes": 63
+  },
+  {
+    "key": "weatherEnabled",
+    "member": "weatherEnabled",
+    "type": "unsigned",
+    "default": 1,
+    "group": "Weather",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "weatherInterval",
+    "member": "weatherRefreshMinutes",
+    "type": "unsigned",
+    "default": 20,
+    "group": "Weather",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "rotation",
+    "member": "displayRotation",
+    "type": "unsigned",
+    "default": 0,
+    "group": "Display",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "sound",
+    "member": "touchSoundEnabled",
+    "type": "unsigned",
+    "default": 1,
+    "group": "Display",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "alarmTime",
+    "member": "alarmTime",
+    "type": "String",
+    "default": "07:00",
+    "group": "Alarm",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "alarmEnabled",
+    "member": "alarmEnabled",
+    "type": "unsigned",
+    "default": 0,
+    "group": "Alarm",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "snooze",
+    "member": "alarmSnoozeMinutes",
+    "type": "unsigned",
+    "default": 5,
+    "group": "Alarm",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "albumInterval",
+    "member": "photoIntervalSeconds",
+    "type": "unsigned",
+    "default": 10,
+    "group": "Photos",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "language",
+    "member": "displayLanguage",
+    "type": "String",
+    "default": "zh",
+    "group": "Display",
+    "secret": false,
+    "apply": "restart",
+    "choices": [
+      "zh",
+      "en"
+    ]
+  },
+  {
+    "key": "clockColor",
+    "member": "clockHourColor",
+    "type": "String",
+    "default": "#ffffff",
+    "group": "Display",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "nasBackground",
+    "member": "monitorBackground",
+    "type": "String",
+    "default": "#21455c",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "cardBackground",
+    "member": "monitorCardBackground",
+    "type": "String",
+    "default": "#103040",
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "minuteColor",
+    "member": "clockMinuteColor",
+    "type": "String",
+    "default": "#ffa500",
+    "group": "Display",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "adminLanguage",
+    "member": "adminLanguage",
+    "type": "String",
+    "default": "zh",
+    "group": "Management",
+    "secret": false,
+    "apply": "live",
+    "choices": [
+      "zh",
+      "en"
+    ]
+  },
+  {
+    "key": "albumFixed",
+    "member": "photoFixedMode",
+    "type": "unsigned",
+    "default": 0,
+    "group": "Photos",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "showSeconds",
+    "member": "clockSecondsEnabled",
+    "type": "unsigned",
+    "default": 1,
+    "group": "Display",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "alarmDays",
+    "member": "alarmWeekdayMask",
+    "type": "unsigned",
+    "default": 31,
+    "group": "Alarm",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "alarmTune",
+    "member": "alarmMelody",
+    "type": "unsigned",
+    "default": 0,
+    "group": "Alarm",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "home",
+    "member": "startupPage",
+    "type": "unsigned",
+    "default": 6,
+    "group": "Display",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "port",
+    "member": "snmpPort",
+    "type": "unsigned",
+    "default": 161,
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "interval",
+    "member": "snmpPollIntervalSeconds",
+    "type": "unsigned",
+    "default": 5,
+    "group": "SNMP",
+    "secret": false,
+    "apply": "restart"
+  },
+  {
+    "key": "brightness",
+    "member": "displayBrightnessPercent",
+    "type": "unsigned",
+    "default": 70,
+    "group": "Display",
+    "secret": false,
+    "apply": "restart"
+  }
+]

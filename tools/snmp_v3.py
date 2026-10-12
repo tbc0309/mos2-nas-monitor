@@ -127,13 +127,17 @@ def value(b, m, ident, report=False):
         raise ValueError("Invalid v3 varbind")
     binding = entries[0]
     name, val = children(b, binding)
-    if (
-        name[0] != 6
-        or name[1] == name[2]
-        or val[0] not in (2, 4, 0x41, 0x42, 0x43, 0x46)
-    ):
-        raise ValueError("OID unavailable")
+    if name[0] != 6 or name[1] == name[2]:
+        raise ValueError("Invalid v3 object identifier")
+    if val[0] in (0x80,0x81,0x82):
+        from snmp_errors import UnsupportedOid
+        raise UnsupportedOid("OID unavailable")
+    if val[0] not in (2,4,6,0x41,0x42,0x43,0x46):
+        raise ValueError("Invalid v3 value type")
     data = content(b, val)
+    if val[0] == 6:
+        if not data: raise ValueError("Empty v3 OID value")
+        return oid_text(content(b,name)),oid_text(data)
     if val[0] != 4 and (not data or len(data) > 9 or (len(data) == 9 and data[0] != 0)):
         raise ValueError("Invalid v3 counter")
     return oid_text(content(b, name)), (
@@ -373,6 +377,11 @@ class Session:
 
 _sessions = {}
 _session_lock = threading.Lock()
+
+def clear_sessions():
+    """Drop cached engines and credential references after target deletion/reset."""
+    with _session_lock:
+        _sessions.clear()
 
 
 def query(host, port, credentials, name, next_oid=False, timeout=4):

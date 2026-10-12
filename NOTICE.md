@@ -7,4 +7,4 @@
 
 参考项目素材和腾讯字体的完整授权范围尚未逐项核验，本仓库未对这些第三方内容另行授予开源许可。转载、商业分发或再发布时，请分别确认相关权利人的许可。
 
-- SHA-1、DES、AES 固件实现使用框架自带 BearSSL；`tests/vendor/bearssl` 保留上游许可，仅用于主机测试。模拟器 DES/AES 依赖 PyCryptodome，适用其原有许可。
+- SHA-1、DES、AES 固件实现使用框架自带 BearSSL，遵循其上游许可。模拟器 DES/AES 依赖 PyCryptodome，适用其原有许可。

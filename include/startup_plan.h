@@ -1,6 +1,12 @@
 #pragma once
 #include <stdint.h>
 namespace Sampling {
+// Known vendor capabilities and the status page need identity immediately.
+// Optional Linux vendor probes yield to the first CPU/RAM snapshots, but have
+// a deadline so a missing live metric cannot suppress identification forever.
+inline bool optionalIdentityReady(uint32_t elapsed,unsigned liveMask,unsigned page,bool knownVendor) {
+  return knownVendor || page==4 || (liveMask&3u)==3u || elapsed>=10000u;
+}
 // Healthy live metrics release the first storage scan. A missing OID must
 // not permanently hide disks; explicit storage pages also take priority.
 inline bool storageBootstrapReady(uint32_t elapsed, unsigned liveMask, unsigned page) {
@@ -11,6 +17,8 @@ inline uint32_t startupDelay(unsigned page, unsigned group) {
   static const uint8_t desktop[] = {20,21,23,22,25,30,35,40,22};
   static const uint8_t nas[] = {30,31,32,33,45,60,65,70,30};
   if (page >= 5 && page <= 7) return desktop[group] * 1000u;
+  // Agent identity selects the platform-specific memory interpretation.
+  if (group == 5) return 0;
   if (page == 0 && group < 4) return 0;
   if (page == 1 && (group == 2 || group == 8)) return 0;
   if (page == 2 && group < 2) return 0;

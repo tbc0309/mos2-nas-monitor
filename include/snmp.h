@@ -1,5 +1,6 @@
 #pragma once
 #include "sampling_policy.h"
+#include "storage_order.h"
 #include <Arduino.h>
 #include <WiFiUdp.h>
 #include <vector>
@@ -88,20 +89,23 @@ inline uint64_t number(const Bytes &b, const Node &n) {
   return v;
 }
 inline String oidText(const Bytes &b, const Node &n) {
-  if (n.begin == n.end)
-    return "";
-  uint8_t v = b[n.begin];
-  String s = String(v < 80 ? v / 40 : 2) + "." + String(v < 80 ? v % 40 : v - 80);
-  uint32_t val = 0;
-  for (size_t p = n.begin + 1; p < n.end; p++) {
-    val = (val << 7) | (b[p] & 127);
+  if (n.begin >= n.end || n.end > b.size() || n.end - n.begin > 128) return "";
+  String text;
+  uint64_t value = 0;
+  unsigned bytes = 0, arcs = 0;
+  for (size_t p = n.begin; p < n.end; ++p) {
+    value = (value << 7) | (b[p] & 127);
+    if (++bytes > 5 || value > (arcs ? 0xffffffffULL : 0xffffffffULL + 80)) return "";
     if (!(b[p] & 128)) {
-      s += '.';
-      s += String(val);
-      val = 0;
+      if (!arcs) {
+        unsigned first = value < 40 ? 0 : value < 80 ? 1 : 2;
+        text = String(first) + "." + String(uint32_t(value - first * 40));
+      } else text += "." + String(uint32_t(value));
+      if (++arcs > 64) return "";
+      value = 0; bytes = 0;
     }
   }
-  return s;
+  return bytes ? String("") : text; // A trailing continuation byte is not a complete arc.
 }
 struct Value {
   String oid, text;
@@ -109,7 +113,7 @@ struct Value {
   uint8_t type = 0;
   bool valid = false, negative = false;
 };
-inline bool decode(const Bytes &b, uint32_t request, Value &value) {
+inline bool decode(const Bytes &b, uint32_t request, Value &value, bool exceptions = false, const String *expectedCommunity = nullptr) {
   value = {};
   size_t p = 0;
   Node outer, ver, community, pdu, id, err, idx, list, binding, o, v;
@@ -120,20 +124,28 @@ inline bool decode(const Bytes &b, uint32_t request, Value &value) {
       !read(b, p, outer.end, community) || community.tag != 4 || !read(b, p, outer.end, pdu) ||
       pdu.tag != 0xa2)
     return false;
+  if (expectedCommunity && (community.end - community.begin != expectedCommunity->length() ||
+      memcmp(b.data() + community.begin, expectedCommunity->c_str(), expectedCommunity->length()))) return false;
   p = pdu.begin;
   if (!read(b, p, pdu.end, id) || id.tag != 2 || number(b, id) != request ||
       !read(b, p, pdu.end, err) || err.tag != 2 || number(b, err) || !read(b, p, pdu.end, idx) ||
-      idx.tag != 2 || !read(b, p, pdu.end, list) || list.tag != 0x30)
+      idx.tag != 2 || !read(b, p, pdu.end, list) || list.tag != 0x30 || p != pdu.end)
     return false;
   p = list.begin;
-  if (!read(b, p, list.end, binding) || binding.tag != 0x30)
+  if (!read(b, p, list.end, binding) || binding.tag != 0x30 || p != list.end)
     return false;
   p = binding.begin;
-  if (!read(b, p, binding.end, o) || o.tag != 6 || !read(b, p, binding.end, v) || v.tag >= 0x80)
+  if (!read(b, p, binding.end, o) || o.tag != 6 || !read(b, p, binding.end, v) || p != binding.end)
     return false;
-  if (v.tag != 4 && v.tag != 2 && v.tag != 0x41 && v.tag != 0x42 && v.tag != 0x43 && v.tag != 0x46)
+  if (exceptions && v.tag >= 0x80 && v.tag <= 0x82 && v.begin == v.end) {
+    value.oid = oidText(b, o);
+    value.type = v.tag;
+    value.negative = true;
+    return true;
+  }
+  if (v.tag != 6 && v.tag != 4 && v.tag != 2 && v.tag != 0x41 && v.tag != 0x42 && v.tag != 0x43 && v.tag != 0x46)
     return false;
-  if (v.tag != 4 &&
+  if (v.tag != 4 && v.tag != 6 &&
       (v.end == v.begin || v.end - v.begin > 9 || (v.end - v.begin == 9 && b[v.begin] != 0)))
     return false;
   value.negative = v.tag == 2 && (b[v.begin] & 128);
@@ -143,6 +155,9 @@ inline bool decode(const Bytes &b, uint32_t request, Value &value) {
   if (v.tag == 4) {
     for (size_t i = v.begin; i < v.end; i++)
       value.text += char(b[i]);
+  } else if (v.tag == 6) {
+    value.text = oidText(b, v);
+    if (!value.text.length()) return false;
   } else
     value.num = number(b, v);
   return true;
@@ -152,8 +167,10 @@ class Client {
   WiFiUDP udp;
   uint32_t sequence = 0, active = 0, started = 0;
   IPAddress target;
-  String expected;
+  String expected, responseCommunity;
+  uint16_t targetPort = 161;
   bool next = false, pending = false, discovery = false, v3 = false;
+  bool localFailure = false;
   uint32_t messageId = 0;
   static unsigned &inFlight() {
     static unsigned n = 0;
@@ -175,14 +192,20 @@ class Client {
   static unsigned &globalFailures() { static unsigned n = 0; return n; }
 
 public:
+  static void resetTransportBudget() {
+    // Called only after cancelling all collectors when the target changes.
+    // Keep send spacing; a dead target must not put the next target in cooldown.
+    globalFailures()=0;cooldownUntil()=0;
+  }
   uint32_t sent = 0, received = 0, timeouts = 0, invalid = 0, sendErrors = 0;
   bool bound = false;
   unsigned timeoutStreak = 0;
   void begin() {
     cancel();
     udp.stop();
-    bound = udp.begin(0);
+    bound = false; // Bind only while an actual request owns the global slot.
     pending = false;
+    localFailure = false;
   }
   String diagnostics() const {
     return String("\"sent\":") + String(sent) + ",\"received\":" + String(received) +
@@ -195,6 +218,7 @@ public:
     return pending;
   }
   void cancel() {
+    localFailure=false;
     auto &q = waiters();
     for (size_t i = 0; i < q.size(); ++i)
       if (q[i] == this) { q.erase(q.begin() + i); break; }
@@ -203,6 +227,8 @@ public:
     if (pending && discovery)
       Usm::session().discovering = false;
     pending = false;
+    udp.stop(); bound = false;
+    expected = responseCommunity = "";
   }
   bool query(IPAddress ip, uint16_t port, const String &community, const String &name,
              bool getNext = false) {
@@ -222,7 +248,7 @@ public:
     discovery = v3 && usm.engine.empty();
     if (v3 && ((!usm.keyReady || !usm.privacyReady) || (discovery && usm.discovering)))
       return false;
-    target = ip;
+    target = ip; targetPort = port; responseCommunity = community;
     next = getNext;
     expected = name;
     active = ++sequence;
@@ -241,17 +267,17 @@ public:
     if (v3) {
       messageId = ++usm.messageId;
       packet = usm.packet(messageId, active, name, next, discovery);
-      if (packet.empty())
-        return false;
+      if (packet.empty()) { ++sendErrors;cancel();localFailure=true;return false; }
       if (discovery)
         usm.discovering = true;
     }
+    if (!bound) bound = udp.begin(0);
+    if (!bound) { ++sendErrors;cancel();localFailure=true;return false; }
     udp.beginPacket(ip, port);
     udp.write(packet.data(), packet.size());
     if (udp.endPacket())
       sent++;
-    else
-      sendErrors++;
+    else { ++sendErrors;cancel();localFailure=true;return false; }
     started = millis();
     pending = true;
     ++inFlight();
@@ -262,6 +288,7 @@ public:
   }
   // 0 waiting, 1 valid response, -1 timeout/error
   int poll(Value &out) {
+    if(localFailure) {localFailure=false;return -1;}
     int len = udp.parsePacket();
     if (len) {
       if (len > 1500) {
@@ -271,10 +298,18 @@ public:
       }
       Bytes b(len);
       udp.read(b.data(), len);
-      if (!pending || udp.remoteIP() != target)
+      if (!pending || udp.remoteIP() != target || udp.remotePort() != targetPort)
         return 0;
       int result = v3 ? Usm::session().accept(b, messageId, active, discovery, out)
-                      : (decode(b, active, out) ? 1 : 0);
+                        : (decode(b, active, out, true, &responseCommunity) ? 1 : 0);
+      if (result == 1 && out.type >= 0x80 && out.type <= 0x82 && out.oid == expected) {
+        cancel();
+        received++;
+        globalFailures()=0;cooldownUntil()=0;timeoutStreak=0;
+        // A supported agent explicitly rejected this OID; do not wait/retry or
+        // count it as a network timeout that trips the global cooldown.
+        return 1;
+      }
       if (result < 0) {
         // A validated engine report is setup, not a failed data sample.
         // Keep the collector cursor so its actual GET can follow immediately.
@@ -282,7 +317,7 @@ public:
         cancel();
         return engineReady ? 0 : -1;
       }
-      if (result == 1 && ((!next && out.oid == expected) || (next && out.oid != expected))) {
+      if (result == 1 && ((!next && out.oid == expected) || (next && StorageOrder::less(expected.c_str(), out.oid.c_str())))) {
         cancel();
         received++;
         globalFailures() = 0;
@@ -304,7 +339,7 @@ public:
         if (v3 && !Usm::session().discovering && millis() - Usm::session().lastResponse > 30000)
           Usm::session().engine.clear();
         udp.stop();
-        bound = udp.begin(0);
+        bound = false;
         timeoutStreak = 0;
       }
       return -1;
