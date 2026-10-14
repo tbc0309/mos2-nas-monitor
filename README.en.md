@@ -8,7 +8,7 @@ Monitor CPU, memory, network traffic, system temperature, disk health and storag
 
 Hardware: **MOS2 · ESP8266 / ESP-12F · 4MB Flash · ST7789 240×240**.
 
-[Download firmware and simulator](https://github.com/tbc0309/mos2-nas-monitor/releases/latest)
+[Download firmware and simulator](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) · [3D-printable case](docs/3D_PRINT_CASE.en.md)
 
 ## Main features
 
@@ -41,6 +41,20 @@ The original large clock digits and weather animation are retained. Hours defaul
 Configure the display, weather, alarms, SNMP devices, Wi-Fi and album in a browser. Switch the web language in the upper right; display language is configured separately.
 
 ![Management settings](docs/images/en/web-management.png)
+
+### 3D-printable case
+
+The MOS2 TV-style enclosure includes 11 STL models, two stand styles, a complete archive and color renders. See the [case download and printing guide](docs/3D_PRINT_CASE.en.md). The compatible [MOS2 board is available on Taobao](https://item.taobao.com/item.htm?id=854776370120).
+
+<img src="hardware/MOS2-TV-3D-PRINT-CASE/render-preview.png" width="900" alt="MOS2 TV-style 3D-printable case renders">
+
+**Front case with integrated legs:** no separate stand is required; 5° and 8° viewing angles are included.
+
+<img src="hardware/MOS2-TV-3D-PRINT-CASE/integrated-four-leg-preview.png" width="900" alt="MOS2 front case with integrated legs at 5 and 8 degrees">
+
+**Standard front case with a separate stand:** choose the compact stand or a retro four-leg TV stand with a 10° or 15° viewing angle.
+
+<img src="hardware/MOS2-TV-3D-PRINT-CASE/retro-four-leg-base-preview.png" width="900" alt="MOS2 retro four-leg TV stands at 10 and 15 degrees">
 
 ## Quick start
 
@@ -168,3 +182,7 @@ Hardware, large clock digits, weather icons and animation reference JSRUN MOS2 /
 
 - [MOS2 official](https://jsrun.net/hw/mos2)
 - [imnks.com](https://imnks.com/)
+
+## Disclaimer
+
+This is a personal Vibe Coding project and is not affiliated with MOS2 or any related Taobao store. No technical support or discussion service is provided. If you encounter a problem, consult the documentation or ask an AI assistant for help.

@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [3D 打印外壳](3D_PRINT_CASE.md) · [English](3D_PRINT_CASE.en.md) | 电视造型外壳 STL 下载、部件清单、渲染图与打印说明 |
 | [实测支持](COMPATIBILITY.md) | 六台实际环境的指标、名称、硬盘/卷及温度边界 |
 | [SNMP 安装](SNMP_INSTALL.md) · [English](SNMP_INSTALL.en.md) | Ubuntu / fnOS / OpenWrt / iStoreOS 复制执行的只读代理配置 |
 | [SNMP 配置](SNMPV3.md) | v2c / v3 参数、认证与加密、状态标识 |

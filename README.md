@@ -8,7 +8,7 @@
 
 适用硬件：**MOS2 · ESP8266 / ESP-12F · 4MB Flash · ST7789 240×240**。
 
-[下载固件与模拟器](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) · [快速开始](#快速开始) · [触摸操作](#触摸操作) · [实测支持](docs/COMPATIBILITY.md) · [安装 SNMP](docs/SNMP_INSTALL.md) · [固件开发](docs/DEVELOPMENT.md)
+[下载固件与模拟器](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) · [3D 打印外壳](docs/3D_PRINT_CASE.md) · [快速开始](#快速开始) · [触摸操作](#触摸操作) · [实测支持](docs/COMPATIBILITY.md) · [安装 SNMP](docs/SNMP_INSTALL.md) · [固件开发](docs/DEVELOPMENT.md)
 
 ## 主要功能
 
@@ -41,6 +41,20 @@
 在浏览器中配置显示、天气、闹钟、SNMP 设备、Wi-Fi 和相册。网页使用浏览器系统字体，语言可在右上角切换。
 
 ![后台管理页面](docs/images/web-management.png)
+
+### 3D 打印外壳
+
+提供 MOS2 电视造型外壳的 11 个 STL 模型、两类底座方案、完整压缩包和配色渲染图。下载与打印说明见 [MOS2 电视造型 3D 打印外壳](docs/3D_PRINT_CASE.md)，适用的 [MOS2 主板可在淘宝购买](https://item.taobao.com/item.htm?id=854776370120)。
+
+<img src="hardware/MOS2-TV-3D-PRINT-CASE/render-preview.png" width="900" alt="MOS2 电视造型 3D 打印外壳渲染图">
+
+**前壳自带四脚：**无需单独打印底座，提供 5° 和 8° 两种仰角。
+
+<img src="hardware/MOS2-TV-3D-PRINT-CASE/integrated-four-leg-preview.png" width="900" alt="MOS2 前壳自带四脚 5 度与 8 度方案">
+
+**标准前壳搭配独立底座：**可选简易底座，或 10°、15° 两种复古电视四脚大底座。
+
+<img src="hardware/MOS2-TV-3D-PRINT-CASE/retro-four-leg-base-preview.png" width="900" alt="MOS2 复古电视四脚大底座 10 度与 15 度方案">
 
 ## 快速开始
 
@@ -166,3 +180,7 @@ Ubuntu / fnOS / OpenWrt / iStoreOS 没有代理时，按 [安装说明](docs/SNM
 
 - [MOS2 官方](https://jsrun.net/hw/mos2)
 - [我不是矿神](https://imnks.com/)
+
+## 免责声明
+
+本项目是个人 Vibe Coding 实验项目，与 MOS2 官方及相关淘宝店铺无关联，不提供技术支持或交流服务。使用中遇到问题，请自行查阅文档或询问 AI 解决。
