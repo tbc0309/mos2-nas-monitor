@@ -1,0 +1,217 @@
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #233444;
+  background: #f3f6f8;
+  font-size: 15px;
+  line-height: 1.65;
+  --accent: #2563eb;
+  --border: #dce4e9;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+select {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 3px solid #93c5fd;
+  outline-offset: 3px;
+}
+.top {
+  max-width: 1080px;
+  margin: auto;
+  padding: 24px 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.brand {
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -0.8px;
+  color: #193c78;
+}
+.brand span {
+  color: var(--accent);
+}
+nav {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #233444;
+  padding: 6px;
+}
+nav select {
+  width: auto;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 6px 12px;
+}
+main {
+  max-width: 1080px;
+  margin: auto;
+  padding: 0 28px;
+}
+.hero {
+  border-radius: 22px;
+  background: #e4f2fc;
+  color: #193c78;
+  padding: 30px 36px;
+}
+.hero h1 {
+  font-size: clamp(27px, 4vw, 42px);
+  line-height: 1.25;
+  margin: 10px 0 16px;
+}
+.hero p {
+  color: #496a80;
+  margin: 8px 0;
+}
+.panel {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 28px;
+  margin: 24px 0;
+}
+h2 {
+  font-size: 22px;
+  margin: 0 0 12px;
+}
+.warning {
+  background: #fff4df;
+  border-left: 4px solid #bd7920;
+  padding: 14px;
+}
+.muted {
+  color: #647787;
+  font-size: 13px;
+}
+.panel label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+#ack {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+button {
+  border: 0;
+  border-radius: 9px;
+  padding: 10px 20px;
+  background: var(--accent);
+  color: white;
+}
+footer {
+  padding: 12px 0 36px;
+  font-size: 13px;
+  color: #647787;
+}
+@media (max-width: 600px) {
+  .top {
+    padding: 18px;
+  }
+  main {
+    padding: 0 16px;
+  }
+  .hero,
+  .panel {
+    padding: 24px;
+  }
+  nav {
+    gap: 12px;
+  }
+}
+
+.github-link {
+  gap: 8px;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  align-items: center;
+  gap: 24px;
+  padding: 20px 28px;
+}
+.hero h1 {
+  font-size: clamp(26px, 3vw, 36px);
+  margin: 8px 0 12px;
+}
+.hero p {
+  font-size: 14px;
+}
+.case-preview {
+  width: 240px;
+  height: 180px;
+  object-fit: contain;
+  filter: drop-shadow(0 7px 6px #244a6020);
+}
+@media (max-width: 600px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr) 128px;
+    gap: 14px;
+    padding: 20px;
+  }
+  .case-preview {
+    width: 128px;
+    height: 120px;
+  }
+  .hero h1 {
+    font-size: 25px;
+  }
+  .hero-copy p:first-child {
+    font-size: 11px;
+  }
+}
+@media (max-width: 380px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+  .case-preview {
+    display: none;
+  }
+}
+
+.hero {
+  color: #193c78;
+}
+.disclaimer {
+  margin: 14px 0 0;
+  line-height: 1.7;
+}

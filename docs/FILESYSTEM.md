@@ -23,12 +23,7 @@ pio run -t buildfs
 python tools/build_install_image.py --output MOS2-NAS-1.2.0.bin
 ```
 
-替换 `COM7` 为实际端口：
-
-```shell
-python -m esptool --port COM7 erase-flash
-python -m esptool --port COM7 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.2.0.bin
-```
+使用 **[网页在线刷写](https://tbc0309.github.io/mos2-nas-monitor/)** 完成全新安装。
 
 全新安装清除配置与照片。首次热点及管理密码为 `12345678`，首次管理登录必须修改密码。发布镜像不包含用户 Wi-Fi 或 NAS 凭据。
 
@@ -42,7 +37,7 @@ python -m esptool --port COM7 write-flash --flash-mode dio --flash-size 4MB 0x0 
 
 浏览器校验完整镜像后，提取程序提交给 OTA。设备再次校验长度、CRC32、`MOS2OTA1` 布局及字库兼容标识，写入暂存区，验证成功才安排重启。上传需要有效登录会话与 CSRF 校验。
 
-网页升级不覆盖整个文件系统。程序与字库必须来自同一构建；更换字库导致资源 CRC 不匹配时，通过 USB 安装完整统一文件。
+网页升级不覆盖整个文件系统。程序与字库必须来自同一构建；更换字库导致资源 CRC 不匹配时，通过网页在线刷写安装完整统一文件。
 
 模拟器验证上传、兼容性和保留 / 清空流程，不执行 ESP8266 固件。
 

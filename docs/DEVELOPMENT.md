@@ -13,7 +13,7 @@ pio run -e mos2 -t buildfs
 python tools/build_install_image.py --output dist/MOS2-NAS-1.2.0.bin
 ```
 
-最后一个文件同时包含程序和系统字库，用于 USB 全新安装；资源一致时管理页也能读取这个容器进行更新。Flash 布局及资源校验见 [FILESYSTEM](FILESYSTEM.md)。先保留原设备配置，再按测试需要决定是否清除用户数据。
+最后一个文件同时包含程序和系统字库，用于网页在线全新安装；资源一致时管理页也能读取这个容器进行更新。Flash 布局及资源校验见 [FILESYSTEM](FILESYSTEM.md)。先保留原设备配置，再按测试需要决定是否清除用户数据。
 
 ## 修改入口
 

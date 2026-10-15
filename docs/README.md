@@ -1,5 +1,7 @@
 # 文档目录
 
+**[网页在线刷写](https://tbc0309.github.io/mos2-nas-monitor/)** · [刷写说明](WEB.md)
+
 日常安装、配网和操作见 [项目 README](../README.md)。本目录保留配置与开发所需的补充说明。
 
 | 文档 | 内容 |

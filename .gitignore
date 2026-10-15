@@ -19,3 +19,9 @@ work/
 # Local-only regression suite
 /tests/
 /tools/local_check.py
+
+# Web installer build dependencies and output
+web/node_modules/
+web/vendor/
+_site/
+release-images/

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>MOS2-NAS · 在线刷写</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="./">MOS2<span>-NAS</span></a>
+      <nav>
+        <a
+          class="github-link"
+          href="https://github.com/tbc0309/mos2-nas-monitor"
+          target="_blank"
+          rel="noopener"
+          aria-label="GitHub 项目地址"
+          title="GitHub"
+          ><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 0C5.37 0 0 5.373 0 12c0 5.302 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577v-2.234c-3.338.726-4.043-1.416-4.043-1.416-.546-1.386-1.333-1.755-1.333-1.755-1.09-.745.083-.73.083-.73 1.205.085 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.108-.775.418-1.305.762-1.605-2.665-.303-5.467-1.334-5.467-5.932 0-1.31.469-2.381 1.236-3.221-.124-.303-.536-1.524.117-3.176 0 0 1.008-.323 3.301 1.23A11.5 11.5 0 0 1 12 5.804c1.02.005 2.045.138 3.003.404 2.291-1.553 3.297-1.23 3.297-1.23.655 1.652.243 2.873.12 3.176.77.84 1.235 1.911 1.235 3.221 0 4.61-2.807 5.625-5.479 5.922.43.372.823 1.102.823 2.222v3.291c0 .322.216.694.825.576C20.565 21.795 24 17.3 24 12 24 5.373 18.627 0 12 0Z"
+            /></svg
+          ><span data-i="projectLink">项目地址</span></a
+        ><select id="language" aria-label="Language">
+          <option value="zh">简体中文</option>
+          <option value="en">English</option>
+        </select>
+      </nav>
+    </header>
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p>MOS2 · ESP8266 · 4MB</p>
+          <h1 data-i="title">在线安装 MOS2-NAS</h1>
+          <p data-i="intro">
+            让 MOS2 成为桌面时钟、天气屏与多设备 SNMP 监控屏。
+          </p>
+        </div>
+        <img
+          class="case-preview"
+          src="assets/mos2-case.png"
+          width="160"
+          height="160"
+          alt="MOS2 8° 仰角电视外壳"
+        />
+      </section>
+      <section class="panel">
+        <h2 data-i="install">1. 在线刷写</h2>
+        <p data-i="browser">
+          请使用电脑端 Chrome 或 Edge，通过 USB 数据线连接
+          MOS2，并关闭占用串口的软件。
+        </p>
+        <p class="warning" data-i="warning">
+          这是全新安装：会覆盖设备配置、照片和字库。保留数据升级请使用设备后台的「维护
+          → 固件升级」。
+        </p>
+        <p id="release" role="status"></p>
+        <label
+          ><input id="ack" type="checkbox" />
+          <span data-i="ack">我了解全新安装会清除配置和照片。</span></label
+        >
+        <p>
+          <button id="prepare" disabled data-i="prepare">准备刷写</button>
+          <span id="installer"></span>
+        </p>
+        <p id="status" role="status" aria-live="polite"></p>
+        <p class="muted" data-i="native">
+          连接后选择 MOS2
+          对应的串口；刷写工具的原生对话框使用英文。刷写期间请保持供电。
+        </p>
+      </section>
+      <section class="panel">
+        <h2 data-i="setup">2. 配网与使用</h2>
+        <ol>
+          <li data-i="step1">
+            首次启动，加入 MOS2-NAS-xxxxxx 热点，密码 12345678。
+          </li>
+          <li data-i="step2">打开 http://192.168.4.1/，连接 2.4GHz Wi-Fi。</li>
+          <li data-i="step3">
+            联网后五击屏幕，扫码进入管理页。默认密码
+            12345678，首次登录必须修改。
+          </li>
+          <li data-i="step4">在「SNMP 配置」中添加设备，保存并重启。</li>
+        </ol>
+        <a
+          href="https://github.com/tbc0309/mos2-nas-monitor#快速开始"
+          target="_blank"
+          rel="noopener"
+          data-i="guide"
+          >查看使用文档</a
+        >
+      </section>
+      <footer>
+        <a
+          href="https://github.com/tbc0309/mos2-nas-monitor/releases/latest"
+          data-i="download"
+          >固件下载</a
+        >
+        · ESP Web Tools (Apache-2.0) · MOS2-NAS (MIT)
+        <p class="disclaimer" data-i="disclaimer">
+          个人开源改版，与 MOS2
+          官方及硬件商家无关联。不提供技术支持，遇到问题请查阅文档或询问 AI。
+        </p>
+      </footer>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

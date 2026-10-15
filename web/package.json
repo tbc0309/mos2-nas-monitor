@@ -1,0 +1,14 @@
+{
+  "name": "mos2-nas-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "esbuild node_modules/esp-web-tools/dist/web/install-button.js --bundle --format=esm --minify --outdir=vendor"
+  },
+  "dependencies": {
+    "esp-web-tools": "10.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

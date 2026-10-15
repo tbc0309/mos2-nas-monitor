@@ -8,7 +8,7 @@
 
 适用硬件：**MOS2 · ESP8266 / ESP-12F · 4MB Flash · ST7789 240×240**。
 
-[下载固件与模拟器](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) · [3D 打印外壳](docs/3D_PRINT_CASE.md) · [快速开始](#快速开始) · [触摸操作](#触摸操作) · [实测支持](docs/COMPATIBILITY.md) · [安装 SNMP](docs/SNMP_INSTALL.md) · [固件开发](docs/DEVELOPMENT.md)
+**[网页在线刷写](https://tbc0309.github.io/mos2-nas-monitor/)** · [下载固件与模拟器](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) · [3D 打印外壳](docs/3D_PRINT_CASE.md) · [快速开始](#快速开始) · [触摸操作](#触摸操作) · [实测支持](docs/COMPATIBILITY.md) · [安装 SNMP](docs/SNMP_INSTALL.md) · [固件开发](docs/DEVELOPMENT.md)
 
 ## 主要功能
 
@@ -60,17 +60,9 @@
 
 ### 安装固件
 
-从 [Releases](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) 下载 `MOS2-NAS-1.2.0.bin`。同一个文件用于 USB 全新安装和资源一致的网页升级，已包含程序与字库。从旧版升级或资源不匹配时使用 USB 完整刷入。也可使用 [MOS2 官方在线免费刷写](https://jsrun.net/hw/mos2)。
+**[网页在线刷写](https://tbc0309.github.io/mos2-nas-monitor/)**：电脑使用 Chrome 或 Edge，数据线连接 MOS2，选择对应串口并按网页提示安装。
 
-全新安装时，替换 `COM7` 为实际串口：
-
-```shell
-python -m pip install esptool
-python -m esptool --port COM7 erase-flash
-python -m esptool --port COM7 --baud 460800 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.2.0.bin
-```
-
-USB 全新安装会清除配置和照片。已有设备需要保留数据时，使用管理页的固件升级功能。
+全新安装包含程序与字库，会清除配置和照片。已有设备需要保留数据时，从 [Releases](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) 下载固件，在设备后台 **维护 → 固件升级** 中更新。
 
 ### 配网与登录
 
@@ -160,7 +152,7 @@ Ubuntu / fnOS / OpenWrt / iStoreOS 没有代理时，按 [安装说明](docs/SNM
 
 ![固件升级页面](docs/images/web-maintenance.png)
 
-网页会校验完整文件，提取程序区升级并保留兼容的系统资源。程序与字库不匹配时，通过 USB 安装完整文件。分区与校验机制见 [文件系统与升级](docs/FILESYSTEM.md)。
+网页会校验完整文件，提取程序区升级并保留兼容的系统资源。程序与字库不匹配时，通过 **[网页在线刷写](https://tbc0309.github.io/mos2-nas-monitor/)** 安装完整文件。分区与校验机制见 [文件系统与升级](docs/FILESYSTEM.md)。
 
 恢复出厂设置删除配置、管理密码和全部照片，保留系统字库；重启后重新配网。
 

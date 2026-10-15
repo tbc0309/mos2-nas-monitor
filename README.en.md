@@ -8,7 +8,7 @@ Monitor CPU, memory, network traffic, system temperature, disk health and storag
 
 Hardware: **MOS2 · ESP8266 / ESP-12F · 4MB Flash · ST7789 240×240**.
 
-[Download firmware and simulator](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) · [3D-printable case](docs/3D_PRINT_CASE.en.md)
+**[Online firmware installer](https://tbc0309.github.io/mos2-nas-monitor/)** · [Download firmware and simulator](https://github.com/tbc0309/mos2-nas-monitor/releases/latest) · [3D-printable case](docs/3D_PRINT_CASE.en.md)
 
 ## Main features
 
@@ -58,19 +58,11 @@ The MOS2 TV-style enclosure includes 11 STL models, two stand styles, a complete
 
 ## Quick start
 
-### Install
+### Install firmware
 
-Download `MOS2-NAS-1.2.0.bin` from [Releases](https://github.com/tbc0309/mos2-nas-monitor/releases/latest). One file contains the application and fonts. Use USB for first installation, older firmware or mismatched resources; compatible resources also allow web updates.
+**[Online firmware installer](https://tbc0309.github.io/mos2-nas-monitor/)** — open in desktop Chrome or Edge, connect MOS2 with a USB data cable, select its serial port and follow the installer.
 
-For a fresh installation, replace `COM7` with your serial port:
-
-```shell
-python -m pip install esptool
-python -m esptool --port COM7 erase-flash
-python -m esptool --port COM7 --baud 460800 write-flash --flash-mode dio --flash-size 4MB 0x0 MOS2-NAS-1.2.0.bin
-```
-
-A fresh USB installation clears settings and photos. Use the web updater to preserve existing user data.
+Fresh installation includes the application and fonts and clears settings and photos. To preserve user data, use **Maintenance → Firmware update** in the device management page with the file from [Releases](https://github.com/tbc0309/mos2-nas-monitor/releases/latest).
 
 ### Wi-Fi and login
 
@@ -162,7 +154,7 @@ Under **Maintenance → Firmware update**, select `MOS2-NAS-1.2.0.bin`. **Keep s
 
 ![Update and reset](docs/images/en/web-maintenance.png)
 
-The updater validates the full file, extracts the application and retains compatible system resources. Use USB installation when firmware and font resources do not match.
+The updater validates the full file, extracts the application and retains compatible system resources. Use the **[Online firmware installer](https://tbc0309.github.io/mos2-nas-monitor/)** when firmware and font resources do not match.
 
 Factory reset removes settings, the management password and all photos while retaining system fonts. Wi-Fi setup is required after reboot.
 
